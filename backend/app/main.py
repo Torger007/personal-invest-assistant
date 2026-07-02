@@ -1,10 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.api import funds, market, advice, tasks
+from app.config import settings
 
 app = FastAPI(
-    title="个人投资助手",
+    title=settings.APP_NAME,
     description="轻量化投资分析系统",
-    version="0.1.0"
+    version=settings.APP_VERSION
 )
 
 # 配置CORS
@@ -15,6 +17,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 注册路由
+app.include_router(funds.router, prefix=settings.API_PREFIX)
+app.include_router(market.router, prefix=settings.API_PREFIX)
+app.include_router(advice.router, prefix=settings.API_PREFIX)
+app.include_router(tasks.router, prefix=settings.API_PREFIX)
 
 @app.get("/")
 async def root():
