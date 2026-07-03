@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import funds, market, advice, tasks
 from app.config import settings
 from app.utils.db import init_db, close_db
+from app.services.data_collector.scheduler import start_scheduler, stop_scheduler
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -28,13 +29,15 @@ app.include_router(tasks.router, prefix=settings.API_PREFIX)
 
 @app.on_event("startup")
 async def startup_event():
-    """应用启动时初始化数据库"""
+    """应用启动时初始化数据库并启动调度器"""
     await init_db()
+    start_scheduler()
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """应用关闭时关闭数据库连接"""
+    """应用关闭时停止调度器并关闭数据库连接"""
+    stop_scheduler()
     await close_db()
 
 
