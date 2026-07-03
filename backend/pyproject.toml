@@ -2,7 +2,6 @@
 name = "personal-invest-assistant"
 version = "0.1.0"
 description = "轻量化个人投资分析助手"
-readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     # Web框架
