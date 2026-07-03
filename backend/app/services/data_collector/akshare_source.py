@@ -238,15 +238,15 @@ class AkShareSource:
     def get_fund_flow(self, days: int = 30) -> List[Dict]:
         """获取北向资金历史数据
 
-        Args:
-            days: 获取最近多少天
+        使用 akshare 的 stock_hsgt_hist_em 接口
+        symbol 可选: "北向资金" / "沪股通" / "深股通"
 
         Returns:
             List[Dict]: 每条包含 date/north_flow/main_flow/retail_flow
+                        north_flow 单位为元
         """
         try:
-            # 北向资金净流入
-            df = ak.stock_hsgt_north_net_flow_in_em(symbol="北向")
+            df = ak.stock_hsgt_hist_em(symbol="北向资金")
         except Exception as e:
             print(f"[AKShare] 获取北向资金数据失败: {e}")
             return []
@@ -259,33 +259,15 @@ class AkShareSource:
         result = []
         for _, row in df.iterrows():
             try:
-                # 列名可能是 '日期'/'date' 和 '当日净流入'/'value' 等，做兼容处理
-                date_val = None
-                for col in ["日期", "date"]:
-                    if col in row.index:
-                        date_val = row[col]
-                        break
-                if date_val is None:
-                    date_val = row.iloc[0]
-
+                date_val = row["日期"]
                 if isinstance(date_val, str):
                     date_val = datetime.strptime(date_val, "%Y-%m-%d").date()
                 elif hasattr(date_val, "date"):
                     date_val = date_val.date()
 
-                # 净流入金额（akshare 单位通常为亿元，转为元）
-                north_flow = 0.0
-                for col in ["当日净流入", "value", "净流入"]:
-                    if col in row.index:
-                        try:
-                            north_flow = float(row[col])
-                            break
-                        except (ValueError, TypeError):
-                            pass
-
-                # akshare 北向资金单位是亿元，转为元
-                if abs(north_flow) < 1e6:
-                    north_flow = north_flow * 1e8
+                # 当日成交净买额（akshare 单位：亿元），转为元
+                net_buy = float(row.get("当日成交净买额", 0) or 0)
+                north_flow = net_buy * 1e8
 
                 result.append({
                     "date": date_val,
