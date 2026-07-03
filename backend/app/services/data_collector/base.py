@@ -35,7 +35,7 @@ class BaseDataSource(ABC):
         pass
 
     @abstractmethod
-    async def get_fund_flow(self) -> Dict:
+    async def get_fund_flow(self, days: int = 30) -> List[Dict]:
         """获取资金流向数据"""
         pass
 

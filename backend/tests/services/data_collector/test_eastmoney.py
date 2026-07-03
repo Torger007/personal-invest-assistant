@@ -110,3 +110,37 @@ async def test_get_index_daily_days_parameter():
         assert len(data_5) <= len(data_10)
     finally:
         await source.close()
+
+
+@pytest.mark.asyncio
+async def test_get_fund_flow_sample():
+    """测试获取资金流向数据（真实请求）"""
+    source = EastMoneySource()
+    try:
+        data = await source.get_fund_flow(days=5)
+        assert isinstance(data, list)
+        if len(data) > 0:
+            record = data[0]
+            assert "date" in record
+            assert "north_flow" in record
+            assert "main_flow" in record
+            assert "retail_flow" in record
+            assert isinstance(record["date"], date)
+            assert isinstance(record["north_flow"], float)
+    finally:
+        await source.close()
+
+
+@pytest.mark.asyncio
+async def test_get_fund_flow_days_parameter():
+    """测试days参数控制资金流向数据量"""
+    source = EastMoneySource()
+    try:
+        data_5 = await source.get_fund_flow(days=5)
+        data_10 = await source.get_fund_flow(days=10)
+
+        assert len(data_5) <= 5
+        assert len(data_10) <= 10
+        assert len(data_5) <= len(data_10)
+    finally:
+        await source.close()

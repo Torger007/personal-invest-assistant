@@ -86,10 +86,48 @@ class EastMoneySource(BaseDataSource):
 
         return result
 
-    async def get_fund_flow(self) -> Dict:
-        """获取资金流向数据（北向资金、主力资金）"""
-        # TODO: 实现资金流向查询
-        return {}
+    async def get_fund_flow(self, days: int = 30) -> List[Dict]:
+        """获取资金流向数据（北向资金、主力资金）
+
+        使用东方财富资金流向接口
+        接口：http://push2.eastmoney.com/api/qt/kamtbs.ann
+        字段：f51=日期, f52=沪股通净流入, f53=深股通净流入,
+              f54=北向合计, f55=当日净额, f56=当日余额
+        """
+        url = "http://push2.eastmoney.com/api/qt/kamtbs.ann"
+        params = {
+            "fields1": "f1,f2,f3,f4",
+            "fields2": "f51,f52,f53,f54,f55,f56",
+            "klt": "101",  # 日K
+            "lmt": str(days),
+        }
+
+        data = await self.fetch(url, params=params)
+
+        if not data or "data" not in data or data["data"] is None:
+            return []
+
+        result = []
+        klines = data["data"].get("klines", [])
+
+        for kline in klines[-days:]:
+            fields = kline.split(",")
+            if len(fields) >= 4:
+                try:
+                    # f52=沪股通净流入, f53=深股通净流入, f54=北向合计
+                    north = float(fields[1]) if fields[1] != "-" else 0.0
+                    # f54为北向合计；如缺失则用 f52+f53
+                    main = float(fields[2]) if fields[2] != "-" else 0.0
+                    result.append({
+                        "date": datetime.strptime(fields[0], "%Y-%m-%d").date(),
+                        "north_flow": north,   # 北向资金净流入（元）
+                        "main_flow": main,     # 沪股通净流入（元，作为主力近似）
+                        "retail_flow": 0.0     # 散户资金暂不可用
+                    })
+                except (ValueError, IndexError):
+                    continue
+
+        return result
 
     async def get_sector_list(self) -> List[Dict]:
         """获取板块列表及涨跌数据"""
