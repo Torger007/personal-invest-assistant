@@ -1,16 +1,19 @@
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from app.utils.db import get_db
 from app.models import AdviceRecord
 import json
-from datetime import date
 
 router = APIRouter(prefix="/advice", tags=["建议"])
 
 @router.get("/")
-async def get_advice_list(db: Session = Depends(get_db)):
+async def get_advice_list(db: AsyncSession = Depends(get_db)):
     """获取建议列表"""
-    records = db.query(AdviceRecord).order_by(AdviceRecord.date.desc()).limit(20).all()
+    result = await db.execute(
+        select(AdviceRecord).order_by(AdviceRecord.date.desc()).limit(20)
+    )
+    records = result.scalars().all()
     return {
         "advice": [
             {
@@ -24,11 +27,15 @@ async def get_advice_list(db: Session = Depends(get_db)):
     }
 
 @router.get("/{fund_code}")
-async def get_fund_advice(fund_code: str, db: Session = Depends(get_db)):
+async def get_fund_advice(fund_code: str, db: AsyncSession = Depends(get_db)):
     """获取单只基金的投资建议"""
-    record = db.query(AdviceRecord).filter(
-        AdviceRecord.fund_code == fund_code
-    ).order_by(AdviceRecord.date.desc()).first()
+    result = await db.execute(
+        select(AdviceRecord)
+        .where(AdviceRecord.fund_code == fund_code)
+        .order_by(AdviceRecord.date.desc())
+        .limit(1)
+    )
+    record = result.scalar_one_or_none()
 
     if not record:
         return {
