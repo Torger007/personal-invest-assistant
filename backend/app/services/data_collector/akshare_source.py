@@ -7,6 +7,29 @@ AKShare 统一数据源
 from typing import List, Dict
 from datetime import datetime, timedelta
 
+import requests
+import urllib3
+
+# 禁用 SSL 警告
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# 保存原始 Session
+_original_session = requests.Session
+
+# 创建自定义 Session，禁用 SSL 验证 + 设置浏览器 UA
+class _CustomSession(requests.Session):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.verify = False  # 禁用 SSL 验证
+        self.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        })
+
+# Monkey patch requests.Session
+requests.Session = _CustomSession
+
 import akshare as ak
 import pandas as pd
 
