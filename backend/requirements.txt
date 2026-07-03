@@ -10,15 +10,12 @@ asyncpg
 pydantic
 pydantic-settings
 
-# HTTP客户端
-httpx
-
-# HTML解析
-beautifulsoup4
-
 # 数据处理
 pandas
 numpy
+
+# 金融数据（akshare）
+akshare
 
 # 技术指标
 ta

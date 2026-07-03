@@ -1,11 +1,16 @@
 """
 定时任务调度器
 负责每日收盘后批量更新数据
+
+采集逻辑使用 akshare（同步），存储使用异步 SQLAlchemy。
+因此采集调用用 asyncio.to_thread 包装，避免阻塞事件循环。
 """
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+import asyncio
+
 from app.utils.db import AsyncSessionLocal
-from app.services.data_collector.eastmoney import EastMoneySource
+from app.services.data_collector.akshare_source import AkShareSource
 from app.services.data_collector.storage import DataStorage
 
 
@@ -22,21 +27,21 @@ async def daily_data_update():
     """
     print("[调度器] 开始每日数据更新...")
 
-    source = EastMoneySource()
+    source = AkShareSource()
     async with AsyncSessionLocal() as session:
         storage = DataStorage(session)
         try:
             # 1. 更新指数行情
             print("[调度器] 1/2 更新指数行情...")
             for index_code in ["000001", "399001", "399006"]:
-                data = await source.get_index_daily(index_code, days=5)
+                data = await asyncio.to_thread(source.get_index_daily, index_code, 5)
                 if data:
                     await storage.save_index_daily(data)
                     print(f"  {index_code}: 更新 {len(data)} 条数据")
 
             # 2. 更新资金流向
             print("[调度器] 2/2 更新资金流向...")
-            flow_data = await source.get_fund_flow(days=5)
+            flow_data = await asyncio.to_thread(source.get_fund_flow, 5)
             if flow_data:
                 await storage.save_fund_flow(flow_data)
                 print(f"  更新 {len(flow_data)} 条数据")
@@ -45,8 +50,6 @@ async def daily_data_update():
 
         except Exception as e:
             print(f"[调度器] 数据更新失败: {e}")
-        finally:
-            await source.close()
 
 
 async def manual_refresh():
