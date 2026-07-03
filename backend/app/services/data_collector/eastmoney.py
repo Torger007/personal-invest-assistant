@@ -3,6 +3,7 @@
 数据接口文档参考：https://push2.eastmoney.com/api/qt/...
 """
 from typing import List, Dict
+from datetime import datetime, timedelta
 from app.services.data_collector.base import BaseDataSource
 
 
@@ -33,12 +34,57 @@ class EastMoneySource(BaseDataSource):
     async def get_index_daily(self, index_code: str, days: int = 30) -> List[Dict]:
         """获取指数日线数据
 
-        东方财富K线接口：
-        http://push2his.eastmoney.com/api/qt/stock/kline/get
-        参数：secid(1.000001), klt(101=日), fqt, beg, end, fields
+        使用东方财富K线接口获取指数历史行情
+        接口：http://push2his.eastmoney.com/api/qt/stock/kline/get
         """
-        # TODO: 实现指数K线查询
-        return []
+        # 构建指数证券ID（市场代码.指数代码）
+        # 1=上交所，0=深交所
+        secid_map = {
+            "000001": "1.000001",  # 上证指数
+            "399001": "0.399001",  # 深证成指
+            "399006": "0.399006",  # 创业板指
+        }
+        secid = secid_map.get(index_code, f"1.{index_code}")
+
+        # 计算日期范围（乘以2确保获取足够数据）
+        end_date = datetime.now().strftime("%Y-%m-%d")
+        start_date = (datetime.now() - timedelta(days=days * 2)).strftime("%Y-%m-%d")
+
+        url = "http://push2his.eastmoney.com/api/qt/stock/kline/get"
+        params = {
+            "secid": secid,
+            "fields1": "f1,f2,f3,f4,f5,f6",
+            "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+            "klt": "101",  # 日K线
+            "fqt": "1",    # 前复权
+            "beg": start_date.replace("-", ""),
+            "end": end_date.replace("-", ""),
+        }
+
+        data = await self.fetch(url, params=params)
+
+        if not data or "data" not in data or data["data"] is None:
+            return []
+
+        klines = data["data"].get("klines", [])
+        result = []
+
+        # 取最近days天的数据
+        for kline in klines[-days:]:
+            fields = kline.split(",")
+            if len(fields) >= 7:
+                result.append({
+                    "code": index_code,
+                    "date": datetime.strptime(fields[0], "%Y-%m-%d").date(),
+                    "open": float(fields[1]),
+                    "close": float(fields[2]),
+                    "high": float(fields[3]),
+                    "low": float(fields[4]),
+                    "volume": int(float(fields[5])),
+                    "amount": float(fields[6])
+                })
+
+        return result
 
     async def get_fund_flow(self) -> Dict:
         """获取资金流向数据（北向资金、主力资金）"""
