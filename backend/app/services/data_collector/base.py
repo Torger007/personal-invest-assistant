@@ -43,12 +43,30 @@ class BaseDataSource(ABC):
         """关闭HTTP客户端"""
         await self.client.aclose()
 
-    async def fetch(self, url: str, params: Optional[Dict] = None) -> Dict:
-        """发送GET请求"""
+    async def fetch(self, url: str, params: Optional[Dict] = None,
+                    headers: Optional[Dict] = None) -> Dict:
+        """发送GET请求
+
+        Args:
+            url: 请求地址
+            params: 查询参数
+            headers: 额外请求头（如Referer）
+        """
         try:
-            resp = await self.client.get(url, params=params)
+            resp = await self.client.get(url, params=params, headers=headers)
             resp.raise_for_status()
             return resp.json()
         except Exception as e:
             print(f"[{self.name}] 请求失败 {url}: {e}")
             return {}
+
+    async def fetch_text(self, url: str, params: Optional[Dict] = None,
+                         headers: Optional[Dict] = None) -> str:
+        """发送GET请求，返回文本内容（用于HTML解析）"""
+        try:
+            resp = await self.client.get(url, params=params, headers=headers)
+            resp.raise_for_status()
+            return resp.text
+        except Exception as e:
+            print(f"[{self.name}] 请求失败 {url}: {e}")
+            return ""
