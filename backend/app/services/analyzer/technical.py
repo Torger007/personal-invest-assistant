@@ -5,7 +5,7 @@
 核心原则：不只看单一指标，而是多指标交叉验证，输出结论+置信度+理由。
 """
 import pandas as pd
-import pandas_ta as ta
+import ta
 from typing import List
 from app.services.analyzer.result import AnalysisResult
 
@@ -87,10 +87,10 @@ class TechnicalAnalyzer:
 
         # 多头排列
         if price > ma5 > ma20:
-            bull.append(f"价格站上5日( {ma5:.4f} )和20日均线( {ma20:.4f} )，多头排列")
+            bull.append(f"价格站上5日({ma5:.4f})和20日均线({ma20:.4f})，多头排列")
             signal, conf = "看多", 0.7
         elif price < ma5 < ma20:
-            bear.append(f"价格跌破5日( {ma5:.4f} )和20日均线( {ma20:.4f} )，空头排列")
+            bear.append(f"价格跌破5日({ma5:.4f})和20日均线({ma20:.4f})，空头排列")
             signal, conf = "看空", 0.7
         else:
             signal, conf = "中性", 0.3
@@ -98,9 +98,9 @@ class TechnicalAnalyzer:
         # 60日均线（中长期趋势）
         if ma60:
             if price > ma60:
-                bull.append(f"价格在60日均线( {ma60:.4f} )上方，中期趋势向上")
+                bull.append(f"价格在60日均线({ma60:.4f})上方，中期趋势向上")
             else:
-                bear.append(f"价格在60日均线( {ma60:.4f} )下方，中期趋势承压")
+                bear.append(f"价格在60日均线({ma60:.4f})下方，中期趋势承压")
 
         return signal, conf
 
@@ -109,27 +109,27 @@ class TechnicalAnalyzer:
         close = df["close"]
 
         # MACD
-        macd = ta.macd(close)
-        if macd is not None and not macd.empty:
-            macd_line = macd["MACD_12_26_9"].iloc[-1]
-            signal_line = macd["MACDs_12_26_9"].iloc[-1]
-            if macd_line > signal_line and macd_line > 0:
-                bull.append("MACD零轴上方金叉，动能增强")
-                return "看多", 0.65
-            elif macd_line < signal_line and macd_line < 0:
-                bear.append("MACD零轴下方死叉，动能衰减")
-                return "看空", 0.65
+        macd_indicator = ta.trend.MACD(close)
+        macd_line = macd_indicator.macd().iloc[-1]
+        signal_line = macd_indicator.macd_signal().iloc[-1]
+
+        if macd_line > signal_line and macd_line > 0:
+            bull.append("MACD零轴上方金叉，动能增强")
+            return "看多", 0.65
+        elif macd_line < signal_line and macd_line < 0:
+            bear.append("MACD零轴下方死叉，动能衰减")
+            return "看空", 0.65
 
         # RSI
-        rsi = ta.rsi(close, length=14)
-        if rsi is not None and not rsi.empty:
-            rsi_val = rsi.iloc[-1]
-            if rsi_val < 30:
-                bull.append(f"RSI={rsi_val:.1f}，超卖区域，反弹概率增加")
-                return "看多", 0.55
-            elif rsi_val > 70:
-                bear.append(f"RSI={rsi_val:.1f}，超买区域，回调风险增加")
-                return "看空", 0.55
+        rsi_indicator = ta.momentum.RSIIndicator(close)
+        rsi_val = rsi_indicator.rsi().iloc[-1]
+
+        if rsi_val < 30:
+            bull.append(f"RSI={rsi_val:.1f}，超卖区域，反弹概率增加")
+            return "看多", 0.55
+        elif rsi_val > 70:
+            bear.append(f"RSI={rsi_val:.1f}，超买区域，回调风险增加")
+            return "看空", 0.55
 
         return "中性", 0.3
 
