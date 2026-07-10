@@ -8,9 +8,13 @@ from app.agent.providers.base import BaseLLMProvider, LLMResponse, ToolCall
 class OpenAIProvider(BaseLLMProvider):
     """OpenAI GPT API Provider"""
 
-    def __init__(self, api_key: str, model: str = "gpt-4-turbo-preview"):
+    def __init__(self, api_key: str, model: str = "gpt-4-turbo-preview",
+                 base_url: str = ""):
         super().__init__(api_key, model)
-        self.client = AsyncOpenAI(api_key=api_key)
+        kwargs = {"api_key": api_key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        self.client = AsyncOpenAI(**kwargs)
 
     async def chat(
         self,

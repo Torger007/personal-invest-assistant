@@ -21,8 +21,10 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = "anthropic"  # anthropic / openai
     ANTHROPIC_API_KEY: str = ""
     ANTHROPIC_MODEL: str = "claude-sonnet-4-20250514"
+    ANTHROPIC_BASE_URL: str = ""  # 留空用默认，代理时设置
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4o"
+    OPENAI_BASE_URL: str = ""  # 留空用默认，代理/Azure时设置
 
     class Config:
         env_file = ".env"

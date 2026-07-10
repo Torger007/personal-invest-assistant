@@ -7,9 +7,13 @@ from app.agent.providers.base import BaseLLMProvider, LLMResponse, ToolCall
 class AnthropicProvider(BaseLLMProvider):
     """Anthropic Claude API Provider"""
 
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514"):
+    def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514",
+                 base_url: str = ""):
         super().__init__(api_key, model)
-        self.client = AsyncAnthropic(api_key=api_key)
+        kwargs = {"api_key": api_key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        self.client = AsyncAnthropic(**kwargs)
 
     async def chat(
         self,
