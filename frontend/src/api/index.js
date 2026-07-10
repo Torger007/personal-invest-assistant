@@ -2,7 +2,7 @@ import axios from 'axios'
 
 const api = axios.create({
   baseURL: '/api',
-  timeout: 10000
+  timeout: 120000  // 2分钟超时，Agent 分析可能需要较长时间
 })
 
 // 市场相关
@@ -29,6 +29,13 @@ export const adviceApi = {
 export const taskApi = {
   refresh: () => api.post('/tasks/refresh'),
   getStatus: () => api.get('/tasks/status')
+}
+
+// Agent 相关
+export const agentApi = {
+  triggerAnalysis: () => api.post('/agent/analyze'),
+  chat: (question) => api.post('/agent/chat', { question }),
+  getHistory: (limit = 10) => api.get('/agent/history', { params: { limit } })
 }
 
 export default api

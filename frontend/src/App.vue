@@ -7,6 +7,7 @@
         <el-menu-item index="/funds">基金分析</el-menu-item>
         <el-menu-item index="/sectors">板块走势</el-menu-item>
         <el-menu-item index="/advice">投资建议</el-menu-item>
+        <el-menu-item index="/agent">AI 助手</el-menu-item>
       </el-menu>
     </el-header>
     <el-main>
