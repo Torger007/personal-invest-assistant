@@ -31,6 +31,10 @@ dependencies = [
 
     # 环境变量
     "python-dotenv>=1.0.0",
+
+    # LLM Provider
+    "anthropic>=0.39.0",
+    "openai>=1.54.0",
 ]
 
 [project.optional-dependencies]
