@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import funds, market, advice, tasks
+from app.api import funds, market, advice, tasks, agent
 from app.config import settings
 from app.utils.db import init_db, close_db
 from app.services.data_collector.scheduler import start_scheduler, stop_scheduler
@@ -25,6 +25,7 @@ app.include_router(funds.router, prefix=settings.API_PREFIX)
 app.include_router(market.router, prefix=settings.API_PREFIX)
 app.include_router(advice.router, prefix=settings.API_PREFIX)
 app.include_router(tasks.router, prefix=settings.API_PREFIX)
+app.include_router(agent.router, prefix=settings.API_PREFIX)
 
 
 @app.on_event("startup")
