@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api import funds, market, advice, tasks, agent
 from app.config import settings
-from app.utils.db import init_db, close_db
+from app.utils.db import close_db, run_migrations
 from app.services.data_collector.scheduler import start_scheduler, stop_scheduler
 
 app = FastAPI(
@@ -30,8 +30,8 @@ app.include_router(agent.router, prefix=settings.API_PREFIX)
 
 @app.on_event("startup")
 async def startup_event():
-    """应用启动时初始化数据库并启动调度器"""
-    await init_db()
+    """应用启动时执行数据库迁移并启动调度器"""
+    await run_migrations()
     start_scheduler()
 
 

@@ -1,18 +1,21 @@
 """
-初始化数据库（异步PostgreSQL版本）
+数据库初始化脚本
+
+使用 Alembic 迁移管理数据库版本。
 """
 import asyncio
 import sys
-sys.path.insert(0, '/b/agent/MyCode/personal-invest-assistant/backend')
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
 
-from app.utils.db import init_db, close_db
+from app.utils.db import run_migrations, close_db
 
 
 async def main():
-    """创建所有表"""
-    print("开始初始化数据库...")
-    await init_db()
-    print("数据库初始化完成！")
+    """执行数据库迁移"""
+    print("开始数据库迁移...")
+    await run_migrations()
+    print("数据库迁移完成！")
     await close_db()
 
 

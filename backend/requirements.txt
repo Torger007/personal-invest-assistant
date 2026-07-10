@@ -5,6 +5,10 @@ uvicorn[standard]
 # 数据库
 sqlalchemy[asyncio]
 asyncpg
+psycopg2-binary
+
+# 数据库迁移
+alembic
 
 # 数据验证
 pydantic
