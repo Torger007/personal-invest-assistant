@@ -17,6 +17,13 @@ class Settings(BaseSettings):
     # API配置
     API_PREFIX: str = "/api"
 
+    # LLM 配置
+    LLM_PROVIDER: str = "anthropic"  # anthropic / openai
+    ANTHROPIC_API_KEY: str = ""
+    ANTHROPIC_MODEL: str = "claude-sonnet-4-20250514"
+    OPENAI_API_KEY: str = ""
+    OPENAI_MODEL: str = "gpt-4o"
+
     class Config:
         env_file = ".env"
 
