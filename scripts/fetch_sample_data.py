@@ -103,7 +103,7 @@ async def main():
             await fetch_fund_flow_data(source, storage)
 
             # 基金净值（暂只打印）
-            fund_codes = ["005827", "110011", "161725"]  # 示例基金
+            fund_codes = ["008163", "021033", "004400", "019172", "021528", "026974"]  # 用户实际持仓
             await fetch_fund_nav_data(source, storage, fund_codes)
         finally:
             pass  # session 由 async with 管理
