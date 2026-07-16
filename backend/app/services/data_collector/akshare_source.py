@@ -241,14 +241,13 @@ class AkShareSource:
         """获取北向资金历史数据
 
         使用 akshare 的 stock_hsgt_hist_em 接口
-        symbol 可选: "北向资金" / "沪股通" / "深股通"
+        symbol 可选: "沪股通" / "深股通" / "北向"（北向=沪股通+深股通）
 
         Returns:
             List[Dict]: 每条包含 date/north_flow/main_flow/retail_flow
-                        north_flow 单位为元
         """
         try:
-            df = ak.stock_hsgt_hist_em(symbol="北向资金")
+            df = ak.stock_hsgt_hist_em(symbol="沪股通")
         except Exception as e:
             print(f"[AKShare] 获取北向资金数据失败: {e}")
             return []
@@ -274,7 +273,7 @@ class AkShareSource:
                 result.append({
                     "date": date_val,
                     "north_flow": north_flow,
-                    "main_flow": 0.0,  # 主力数据暂未支持
+                    "main_flow": 0.0,
                     "retail_flow": 0.0,
                 })
             except Exception as e:
