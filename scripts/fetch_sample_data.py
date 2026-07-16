@@ -6,6 +6,9 @@ import asyncio
 import sys
 sys.path.insert(0, '/b/agent/MyCode/personal-invest-assistant/backend')
 
+# 应用 SSL/UA 补丁（必须在其他模块导入之前）
+from app.startup_patch import *
+
 from app.utils.db import AsyncSessionLocal, close_db
 from app.services.data_collector.akshare_source import AkShareSource
 from app.services.data_collector.storage import DataStorage

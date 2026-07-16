@@ -2,31 +2,12 @@
 AKShare 统一数据源
 
 用 akshare 替换原东方财富/天天基金 HTTP 爬虫。
-所有方法同步执行，返回 List[Dict]，便于调用方（调度器）用 asyncio.to_thread 包装。
+所有方法同步执行，返回 List[Dict]，便于调用方用 asyncio.to_thread 包装。
+
+SSL/UA 补丁在 app.startup_patch 中统一处理，此处直接调用。
 """
 from typing import List, Dict
-from datetime import datetime, timedelta
-
-import requests
-import urllib3
-
-# 禁用 SSL 警告
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-# Monkey patch requests.get，禁用 SSL 验证 + 设置浏览器 UA
-_original_get = requests.get
-
-def _patched_get(url, **kwargs):
-    kwargs['verify'] = False
-    kwargs.setdefault('headers', {})
-    kwargs['headers'].update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-    })
-    return _original_get(url, **kwargs)
-
-requests.get = _patched_get
+from datetime import datetime
 
 import akshare as ak
 import pandas as pd

@@ -1,3 +1,7 @@
+# 启动补丁：必须在所有其他 import 之前执行
+# 解决 akshare 访问东方财富等网站的 TLS 连接问题
+from app.startup_patch import *
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api import funds, market, advice, tasks, agent
