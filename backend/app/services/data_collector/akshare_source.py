@@ -267,7 +267,13 @@ class AkShareSource:
                     date_val = date_val.date()
 
                 # 当日成交净买额（akshare 单位：亿元），转为元
-                net_buy = float(row.get("当日成交净买额", 0) or 0)
+                # 注意：字段可能是 NaN 或字符串
+                net_buy_raw = row.get("当日成交净买额")
+                if pd.isna(net_buy_raw) or net_buy_raw == '' or net_buy_raw == '-':
+                    net_buy = 0.0
+                else:
+                    net_buy = float(net_buy_raw)
+
                 north_flow = net_buy * 1e8
 
                 result.append({

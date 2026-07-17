@@ -4,7 +4,15 @@
 """
 import asyncio
 import sys
-sys.path.insert(0, '/b/agent/MyCode/personal-invest-assistant/backend')
+import os
+
+# 必须在导入其他模块之前设置路径和加载 .env
+backend_dir = os.path.join(os.path.dirname(__file__), '..', 'backend')
+sys.path.insert(0, backend_dir)
+
+# 加载 .env
+from dotenv import load_dotenv
+load_dotenv(os.path.join(backend_dir, '.env'))
 
 # 应用 SSL/UA 补丁（必须在其他模块导入之前）
 from app.startup_patch import *
@@ -32,7 +40,7 @@ async def fetch_index_data(source, storage):
             latest = data[0]
             print(f"  最新: {latest['date']} 收盘 {latest['close']}")
             await storage.save_index_daily(data)
-            print(f"  ✓ 已保存到数据库")
+            print(f"  [OK] 已保存到数据库")
 
 
 async def fetch_fund_flow_data(source, storage):
@@ -45,7 +53,7 @@ async def fetch_fund_flow_data(source, storage):
         latest = data[0]
         print(f"  最新: {latest['date']} 北向资金 {latest['north_flow']/1e8:.2f} 亿")
         await storage.save_fund_flow(data)
-        print(f"  ✓ 已保存到数据库")
+        print(f"  [OK] 已保存到数据库")
 
 
 async def fetch_fund_nav_data(source, storage, fund_codes):
