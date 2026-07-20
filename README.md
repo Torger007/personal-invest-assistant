@@ -57,7 +57,7 @@ cd backend
 python -m venv venv
 source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+uvicorn app.main:app --host 0.0.0.0 --port 8001
 
 # 3. 前端（新开终端）
 cd frontend
@@ -70,7 +70,7 @@ npm run dev
 ### 访问
 
 - **前端界面**：http://localhost:5173
-- **API 文档**：http://localhost:8000/docs
+- **API 文档**：http://localhost:8001/docs
 
 ## 项目结构
 
