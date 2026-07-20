@@ -4,7 +4,7 @@ from datetime import date
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.models.fund import Fund
+from app.models.fund import Fund, FundNav
 from app.models.market import IndexDaily, FundFlow
 
 
@@ -175,6 +175,71 @@ class DataStorage:
                 "north_flow": record.north_flow,
                 "main_flow": record.main_flow,
                 "retail_flow": record.retail_flow,
+            })
+
+        return data_list
+
+    async def save_fund_nav(self, nav_data: List[Dict]) -> bool:
+        """保存基金净值数据，支持批量和更新
+
+        Args:
+            nav_data: 基金净值数据列表，每个元素包含 fund_code, date, unit_nav, acc_nav, daily_return
+
+        Returns:
+            bool: 是否保存成功
+        """
+        try:
+            for data in nav_data:
+                # 根据 fund_code 和 date 判断是否已存在
+                result = await self._db.execute(
+                    select(FundNav).where(
+                        FundNav.fund_code == data["fund_code"],
+                        FundNav.date == data["date"]
+                    )
+                )
+                existing = result.scalar_one_or_none()
+
+                if existing:
+                    # 更新已有记录
+                    for key, value in data.items():
+                        setattr(existing, key, value)
+                else:
+                    # 新增记录
+                    new_record = FundNav(**data)
+                    self._db.add(new_record)
+
+            await self._db.commit()
+            return True
+        except Exception as e:
+            await self._db.rollback()
+            raise e
+
+    async def get_fund_nav_history(self, fund_code: str, days: int = 30) -> List[Dict]:
+        """查询基金净值历史
+
+        Args:
+            fund_code: 基金代码
+            days: 查询天数
+
+        Returns:
+            List[Dict]: 净值数据列表，按日期降序排列（最新的在前）
+        """
+        result = await self._db.execute(
+            select(FundNav)
+            .where(FundNav.fund_code == fund_code)
+            .order_by(FundNav.date.desc())
+            .limit(days)
+        )
+        records = result.scalars().all()
+
+        data_list = []
+        for record in records:
+            data_list.append({
+                "fund_code": record.fund_code,
+                "date": record.date,
+                "unit_nav": float(record.unit_nav) if record.unit_nav else None,
+                "acc_nav": float(record.acc_nav) if record.acc_nav else None,
+                "daily_return": float(record.daily_return) if record.daily_return else None,
             })
 
         return data_list

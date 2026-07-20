@@ -16,7 +16,8 @@ export const marketApi = {
 // 基金相关
 export const fundApi = {
   getList: () => api.get('/funds/'),
-  getDetail: (code) => api.get(`/funds/${code}`)
+  getDetail: (code) => api.get(`/funds/${code}`),
+  getNav: (code, days = 30) => api.get(`/funds/${code}/nav`, { params: { days } })
 }
 
 // 建议相关
