@@ -21,6 +21,9 @@ numpy
 # 金融数据（akshare）
 akshare
 
+# 网络请求（绕过反爬）
+curl_cffi
+
 # 技术指标
 ta
 
