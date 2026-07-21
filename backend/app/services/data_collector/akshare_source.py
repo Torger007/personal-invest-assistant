@@ -210,20 +210,8 @@ class AkShareSource:
                     import time
                     time.sleep(0.5)
 
-        # 备用数据源：从净值接口获取基金名称
-        try:
-            df = ak.fund_open_fund_info_em(symbol=fund_code, indicator="单位净值走势")
-            if df is not None and not df.empty:
-                # 尝试从数据中提取基金名称（如果有的话）
-                # 或者返回一个基础结构，让调用方知道至少净值接口可用
-                return {
-                    "code": fund_code,
-                    "name": f"基金{fund_code}",  # 临时名称
-                    "type": "未知",
-                }
-        except Exception as e:
-            print(f"[AKShare] 备用数据源也失败: {e}")
-
+        # 备用数据源：从基金详情接口获取（fund_individual_basic_info_xq）
+        # 注意：不能用占位名称写入数据库，只在主数据源完全失败时才尝试
         return {"code": fund_code}
 
     def get_fund_list(self) -> List[Dict]:

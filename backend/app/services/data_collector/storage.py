@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.models.fund import Fund, FundNav
-from app.models.market import IndexDaily, FundFlow
+from app.models.market import IndexDaily, FundFlow, SectorBoard, SectorDaily
 
 
 class DataStorage:
@@ -20,7 +20,7 @@ class DataStorage:
         self._db = db_session
 
     async def save_fund_info(self, fund_data: Dict) -> bool:
-        """保存基金信息，支持更新
+        """保存基金信息，支持更新。已有记录时只更新有效字段，防止脏数据覆盖。
 
         Args:
             fund_data: 基金信息字典，包含 code, name, type, manager, company, create_date
@@ -36,19 +36,38 @@ class DataStorage:
             existing = result.scalar_one_or_none()
 
             if existing:
-                # 更新已有记录
+                # 只更新有效字段，不覆盖已有正确数据
                 for key, value in fund_data.items():
-                    setattr(existing, key, value)
+                    if key == "code":
+                        continue
+                    # 跳过占位名称（格式: "基金"+纯数字代码）
+                    if key == "name" and self._is_placeholder_name(fund_data["code"], value):
+                        continue
+                    # 跳过无效值
+                    if key == "type" and (not value or value == "未知" or value.strip() == ""):
+                        continue
+                    if value is not None and value != "":
+                        setattr(existing, key, value)
             else:
-                # 新增记录
-                new_fund = Fund(**fund_data)
-                self._db.add(new_fund)
+                # 新增记录，但跳过占位名称
+                if not self._is_placeholder_name(fund_data.get("code", ""), fund_data.get("name", "")):
+                    new_fund = Fund(**fund_data)
+                    self._db.add(new_fund)
 
             await self._db.commit()
             return True
         except Exception as e:
             await self._db.rollback()
             raise e
+
+    @staticmethod
+    def _is_placeholder_name(code: str, name: str) -> bool:
+        """判断名称是否为占位名称（如 基金008163）"""
+        if not name or not code:
+            return True
+        name = str(name).strip()
+        code = str(code).strip()
+        return name == f"基金{code}"
 
     async def save_index_daily(self, index_data: List[Dict]) -> bool:
         """保存指数日线数据，支持批量和更新
@@ -243,3 +262,163 @@ class DataStorage:
             })
 
         return data_list
+
+    # ============== 板块数据 ==============
+
+    async def save_sector_board(self, sector_list: List[Dict]) -> bool:
+        """保存板块排名快照（先清空当日同类型旧数据，再批量插入）
+
+        Args:
+            sector_list: 板块数据列表，每个包含 code/name/type/change_pct/volume/amount/leader/leader_change/snap_date
+
+        Returns:
+            bool: 是否保存成功
+        """
+        try:
+            if not sector_list:
+                return True
+
+            sector_type = sector_list[0].get("type", "concept")
+            snap_date = sector_list[0].get("snap_date")
+
+            # 删除同一日期+类型的旧快照
+            from sqlalchemy import delete
+            if snap_date:
+                await self._db.execute(
+                    delete(SectorBoard).where(
+                        SectorBoard.snap_date == snap_date,
+                        SectorBoard.type == sector_type
+                    )
+                )
+
+            # 批量插入新数据
+            for data in sector_list:
+                record = SectorBoard(**data)
+                self._db.add(record)
+
+            await self._db.commit()
+            return True
+        except Exception as e:
+            await self._db.rollback()
+            raise e
+
+    async def get_sector_board(self, sector_type: str = "concept",
+                               limit: int = 50) -> List[Dict]:
+        """查询最新板块排名
+
+        Args:
+            sector_type: 板块类型 concept / industry
+            limit: 返回条数
+
+        Returns:
+            List[Dict]: 板块排名列表，按涨跌幅降序
+        """
+        from sqlalchemy import desc
+        result = await self._db.execute(
+            select(SectorBoard)
+            .where(SectorBoard.type == sector_type)
+            .order_by(desc(SectorBoard.change_pct))
+            .limit(limit)
+        )
+        records = result.scalars().all()
+
+        return [
+            {
+                "code": r.code,
+                "name": r.name,
+                "type": r.type,
+                "change_pct": r.change_pct,
+                "volume": r.volume,
+                "amount": r.amount,
+                "leader": r.leader,
+                "leader_change": r.leader_change,
+                "snap_date": str(r.snap_date) if r.snap_date else None,
+            }
+            for r in records
+        ]
+
+    async def save_sector_daily(self, daily_list: List[Dict]) -> bool:
+        """保存板块日线数据（支持批量 upsert）
+
+        Args:
+            daily_list: 板块日线列表，每项含 sector_name/date/open/close/high/low/change_pct/volume/amount
+
+        Returns:
+            bool: 是否保存成功
+        """
+        try:
+            for data in daily_list:
+                result = await self._db.execute(
+                    select(SectorDaily).where(
+                        SectorDaily.sector_name == data["sector_name"],
+                        SectorDaily.date == data["date"]
+                    )
+                )
+                existing = result.scalar_one_or_none()
+
+                if existing:
+                    for key, value in data.items():
+                        setattr(existing, key, value)
+                else:
+                    record = SectorDaily(**data)
+                    self._db.add(record)
+
+            await self._db.commit()
+            return True
+        except Exception as e:
+            await self._db.rollback()
+            raise e
+
+    async def get_sector_daily_hist(self, sector_name: str,
+                                    days: int = 30) -> List[Dict]:
+        """查询单个板块历史K线
+
+        Args:
+            sector_name: 板块名称
+            days: 查询天数
+
+        Returns:
+            List[Dict]: 日线列表，按日期降序（最新在前）
+        """
+        result = await self._db.execute(
+            select(SectorDaily)
+            .where(SectorDaily.sector_name == sector_name)
+            .order_by(SectorDaily.date.desc())
+            .limit(days)
+        )
+        records = result.scalars().all()
+
+        return [
+            {
+                "sector_name": r.sector_name,
+                "date": str(r.date) if r.date else None,
+                "open": r.open,
+                "close": r.close,
+                "high": r.high,
+                "low": r.low,
+                "change_pct": r.change_pct,
+                "volume": r.volume,
+                "amount": r.amount,
+            }
+            for r in records
+        ]
+
+    async def get_hot_sectors(self, sector_type: str = "concept",
+                              top_n: int = 10) -> List[str]:
+        """获取涨幅前N的板块名称列表（用于按需采集历史K线）
+
+        Args:
+            sector_type: 板块类型
+            top_n: 前N名
+
+        Returns:
+            List[str]: 板块名称列表
+        """
+        from sqlalchemy import desc
+        result = await self._db.execute(
+            select(SectorBoard.name)
+            .where(SectorBoard.type == sector_type)
+            .order_by(desc(SectorBoard.change_pct))
+            .limit(top_n)
+        )
+        return [row[0] for row in result.all()]
