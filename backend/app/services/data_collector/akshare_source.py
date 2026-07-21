@@ -7,7 +7,7 @@ AKShare 统一数据源
 SSL/UA 补丁在 app.startup_patch 中统一处理，此处直接调用。
 """
 from typing import List, Dict
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 import akshare as ak
 import pandas as pd
@@ -179,6 +179,24 @@ class AkShareSource:
         result.sort(key=lambda x: x["date"], reverse=True)
         return result
 
+    def _get_fund_name_df(self):
+        """获取全市场基金列表 DataFrame（类级别缓存，避免重复调用 AKShare）"""
+        import time
+        cls = self.__class__
+        if not hasattr(cls, "_fund_name_cache"):
+            cls._fund_name_cache = (0, None)
+        cache_time, cache_data = cls._fund_name_cache
+        now = time.time()
+        if cache_data is not None and now - cache_time < 60:
+            return cache_data
+        df = ak.fund_name_em()
+        cls._fund_name_cache = (now, df)
+        return df
+
+    def _clear_fund_name_cache(self):
+        """清除基金列表缓存"""
+        self.__class__._fund_name_cache = (0, None)
+
     def get_fund_info(self, fund_code: str) -> Dict:
         """获取基金基本信息（从全市场基金列表查询）
 
@@ -186,12 +204,11 @@ class AkShareSource:
             fund_code: 基金代码
 
         Returns:
-            Dict: 包含 code/name/type 等信息
+            Dict: 包含 code/name/type 等信息，失败时只返回 code
         """
-        # 主数据源：fund_name_em
-        for attempt in range(3):
+        for attempt in range(2):
             try:
-                df = ak.fund_name_em()
+                df = self._get_fund_name_df()
                 if df is not None and not df.empty:
                     row = df[df["基金代码"].astype(str) == str(fund_code)]
                     if not row.empty:
@@ -205,13 +222,15 @@ class AkShareSource:
                                 "type": fund_type,
                             }
             except Exception as e:
-                print(f"[AKShare] fund_name_em 失败 (尝试 {attempt+1}/3): {e}")
-                if attempt < 2:
+                print(f"[AKShare] fund_name_em 失败 (尝试 {attempt+1}/2): {e}")
+                if attempt < 1:
+                    # 清除缓存后重试一次
                     import time
                     time.sleep(0.5)
+                    self._clear_fund_name_cache()
 
-        # 备用数据源：从基金详情接口获取（fund_individual_basic_info_xq）
-        # 注意：不能用占位名称写入数据库，只在主数据源完全失败时才尝试
+        # 失败时只返回 code，调用方会跳过入库（因为没有 name）
+        print(f"[AKShare] get_fund_info 失败，未获取到 {fund_code} 的基金信息")
         return {"code": fund_code}
 
     def get_fund_list(self) -> List[Dict]:
@@ -220,11 +239,7 @@ class AkShareSource:
         Returns:
             List[Dict]: 每条包含 code/name/type
         """
-        try:
-            df = ak.fund_name_em()
-        except Exception as e:
-            print(f"[AKShare] 获取基金列表失败: {e}")
-            return []
+        df = self._get_fund_name_df()
 
         if df is None or df.empty:
             return []
@@ -295,26 +310,40 @@ class AkShareSource:
         result.sort(key=lambda x: x["date"], reverse=True)
         return result
 
-    # ============== 板块数据 ==============
+    # ============== 板块数据（使用同花顺数据源，东方财富板块接口被CDN拦截）==============
 
     def get_sector_list(self, sector_type: str = "concept") -> List[Dict]:
         """获取板块列表（概念板块或行业板块）
+
+        行业板块使用 stock_board_industry_summary_ths，返回涨跌幅/成交量/领涨股等完整数据。
+        概念板块使用 stock_board_concept_name_ths，仅返回名称+代码，涨跌幅在点击时通过K线计算。
 
         Args:
             sector_type: "concept" 概念板块 / "industry" 行业板块
 
         Returns:
-            List[Dict]: 每条包含 code/name/type/change_pct/volume/amount
+            List[Dict]: 每条包含 code/name/type/change_pct/volume/amount/leader/leader_change
+        """
+        if sector_type == "industry":
+            return self._get_industry_list_ths()
+        else:
+            return self._get_concept_list_ths()
+
+    def _get_industry_list_ths(self) -> List[Dict]:
+        """从同花顺获取行业板块排名（含涨跌幅、成交量、领涨股等完整数据）
+
+        列布局（位置索引）:
+            [0]=序号 [1]=名称 [2]=涨跌幅 [3]=总成交量 [4]=总成交额
+            [5]=换手率 [6]=上涨家数 [7]=下跌家数
+            [8]=市盈率 [9]=领涨股 [10]=领涨股-所属行业? [11]=领涨股-涨跌幅
+
+        Returns:
+            List[Dict]
         """
         try:
-            if sector_type == "industry":
-                df = ak.stock_board_industry_name_em()
-                board_type = "industry"
-            else:
-                df = ak.stock_board_concept_name_em()
-                board_type = "concept"
+            df = ak.stock_board_industry_summary_ths()
         except Exception as e:
-            print(f"[AKShare] 获取板块列表失败: {e}")
+            print(f"[AKShare] 获取行业板块排名失败: {e}")
             return []
 
         if df is None or df.empty:
@@ -324,39 +353,82 @@ class AkShareSource:
         for _, row in df.iterrows():
             try:
                 result.append({
-                    "code": str(row.get("板块代码", "") or row.get("板块名称", "")),
-                    "name": str(row.get("板块名称", "")),
-                    "type": board_type,
-                    "change_pct": float(row.get("涨跌幅", 0) or 0),
-                    "volume": float(row.get("总成交量", 0) or 0) if "总成交量" in row.index else 0.0,
-                    "amount": float(row.get("成交额", 0) or 0) if "成交额" in row.index else 0.0,
-                    "leader": str(row.get("领涨股票", "") or ""),
-                    "leader_change": float(row.get("领涨股票-涨跌幅", 0) or 0) if "领涨股票-涨跌幅" in row.index else 0.0,
+                    "code": str(row.iloc[1]),       # 名称（兼做code）
+                    "name": str(row.iloc[1]),        # 名称
+                    "type": "industry",
+                    "change_pct": float(row.iloc[2] or 0),    # 涨跌幅
+                    "volume": float(row.iloc[3] or 0),        # 总成交量
+                    "amount": float(row.iloc[4] or 0),        # 总成交额
+                    "leader": str(row.iloc[9] or ""),         # 领涨股
+                    "leader_change": float(row.iloc[11] or 0), # 领涨股-涨跌幅
                 })
             except Exception:
                 continue
 
-        # 按涨跌幅降序
         result.sort(key=lambda x: x["change_pct"], reverse=True)
+        return result
+
+    def _get_concept_list_ths(self) -> List[Dict]:
+        """从同花顺获取概念板块列表（仅名称+代码，无涨跌幅/成交量）
+
+        列布局: [0]=name [1]=code
+
+        Returns:
+            List[Dict]
+        """
+        try:
+            df = ak.stock_board_concept_name_ths()
+        except Exception as e:
+            print(f"[AKShare] 获取概念板块列表失败: {e}")
+            return []
+
+        if df is None or df.empty:
+            return []
+
+        result = []
+        for _, row in df.iterrows():
+            try:
+                result.append({
+                    "code": str(row.iloc[1]),        # code
+                    "name": str(row.iloc[0]),         # name
+                    "type": "concept",
+                    "change_pct": 0.0,
+                    "volume": 0.0,
+                    "amount": 0.0,
+                    "leader": "",
+                    "leader_change": 0.0,
+                })
+            except Exception:
+                continue
+
         return result
 
     def get_sector_hist(self, sector_name: str, days: int = 30,
                         sector_type: str = "concept") -> List[Dict]:
-        """获取板块历史行情
+        """获取板块历史行情（使用同花顺数据源）
 
         Args:
-            sector_name: 板块名称（中文），如 "人工智能"
+            sector_name: 板块名称（中文），如 "人工智能"、"半导体"
             days: 最近多少天
             sector_type: "concept" / "industry"
 
         Returns:
             List[Dict]: 每条包含 date/name/open/close/high/low/change_pct/volume/amount
         """
+        today = date.today()
+        # 多取一些天数以防停牌/节假日
+        start_date = (today - timedelta(days=days * 3)).strftime("%Y%m%d")
+        end_date = today.strftime("%Y%m%d")
+
         try:
             if sector_type == "industry":
-                df = ak.stock_board_industry_hist_em(symbol=sector_name, period="日k")
+                df = ak.stock_board_industry_index_ths(
+                    symbol=sector_name, start_date=start_date, end_date=end_date
+                )
             else:
-                df = ak.stock_board_concept_hist_em(symbol=sector_name, period="日k")
+                df = ak.stock_board_concept_index_ths(
+                    symbol=sector_name, start_date=start_date, end_date=end_date
+                )
         except Exception as e:
             print(f"[AKShare] 获取板块 {sector_name} 历史行情失败: {e}")
             return []
@@ -364,27 +436,43 @@ class AkShareSource:
         if df is None or df.empty:
             return []
 
+        # 只取最近 days 天
         df = df.tail(days)
 
         result = []
+        prev_close = None
         for _, row in df.iterrows():
             try:
-                date_val = row.get("日期")
+                date_val = row.iloc[0]  # 第一列是日期
                 if isinstance(date_val, str):
                     date_val = datetime.strptime(date_val, "%Y-%m-%d").date()
                 elif hasattr(date_val, "date"):
                     date_val = date_val.date()
 
+                close_val = float(row.iloc[4])  # 第5列是收盘价
+                open_val = float(row.iloc[1])
+                high_val = float(row.iloc[2])
+                low_val = float(row.iloc[3])
+                vol = float(row.iloc[5]) if len(row) > 5 else 0.0
+                amt = float(row.iloc[6]) if len(row) > 6 else 0.0
+
+                # 计算涨跌幅
+                if prev_close and prev_close != 0:
+                    change_pct = (close_val - prev_close) / prev_close * 100
+                else:
+                    change_pct = 0.0
+                prev_close = close_val
+
                 result.append({
                     "date": date_val,
                     "name": sector_name,
-                    "open": float(row.get("开盘", 0) or 0),
-                    "close": float(row.get("收盘", 0) or 0),
-                    "high": float(row.get("最高", 0) or 0),
-                    "low": float(row.get("最低", 0) or 0),
-                    "change_pct": float(row.get("涨跌幅", 0) or 0),
-                    "volume": float(row.get("成交量", 0) or 0),
-                    "amount": float(row.get("成交额", 0) or 0),
+                    "open": open_val,
+                    "close": close_val,
+                    "high": high_val,
+                    "low": low_val,
+                    "change_pct": round(change_pct, 2),
+                    "volume": vol,
+                    "amount": amt,
                 })
             except Exception as e:
                 print(f"[AKShare] 解析板块 {sector_name} 行失败: {e}")
