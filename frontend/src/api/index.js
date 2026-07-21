@@ -10,7 +10,12 @@ export const marketApi = {
   getOverview: () => api.get('/market/overview'),
   getIndexDetail: (code, days = 30) => api.get(`/market/index/${code}`, { params: { days } }),
   getFundFlow: (days = 30) => api.get('/market/fund-flow', { params: { days } }),
-  getSectors: () => api.get('/market/sectors')
+  getSectors: (sectorType = 'concept', limit = 50) =>
+    api.get('/market/sectors', { params: { sector_type: sectorType, limit } }),
+  getSectorHist: (name, days = 30) =>
+    api.get(`/market/sectors/${encodeURIComponent(name)}/hist`, { params: { days } }),
+  getSectorTrend: (sectorType = 'concept', limit = 50) =>
+    api.get('/market/sectors/trend', { params: { sector_type: sectorType, limit } })
 }
 
 // 基金相关

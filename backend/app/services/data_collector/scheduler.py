@@ -25,7 +25,10 @@ async def daily_data_update():
     1. 更新指数行情
     2. 更新资金流向
     3. 更新持仓基金信息 + 净值
+    4. 更新板块排名 + 热门板块历史K线
     """
+    from datetime import date as date_type
+
     print("[调度器] 开始每日数据更新...")
 
     source = AkShareSource()
@@ -34,7 +37,7 @@ async def daily_data_update():
         storage = DataStorage(session)
         try:
             # 1. 更新指数行情
-            print("[调度器] 1/3 更新指数行情...")
+            print("[调度器] 1/4 更新指数行情...")
             for index_code in ["000001", "399001", "399006"]:
                 data = await asyncio.to_thread(source.get_index_daily, index_code, 5)
                 if data:
@@ -42,25 +45,53 @@ async def daily_data_update():
                     print(f"  {index_code}: 更新 {len(data)} 条数据")
 
             # 2. 更新资金流向
-            print("[调度器] 2/3 更新资金流向...")
+            print("[调度器] 2/4 更新资金流向...")
             flow_data = await asyncio.to_thread(source.get_fund_flow, 5)
             if flow_data:
                 await storage.save_fund_flow(flow_data)
                 print(f"  更新 {len(flow_data)} 条数据")
 
             # 3. 更新持仓基金信息 + 净值
-            print(f"[调度器] 3/3 更新持仓基金 ({len(portfolio)}只)...")
+            print(f"[调度器] 3/4 更新持仓基金 ({len(portfolio)}只)...")
             for fund in portfolio:
                 code = fund["code"]
-                # 基金基本信息
                 info = await asyncio.to_thread(source.get_fund_info, code)
                 if info and info.get("name"):
                     await storage.save_fund_info(info)
-                # 基金净值（最近30天）
                 nav_data = await asyncio.to_thread(source.get_fund_nav, code, 30)
                 if nav_data:
                     await storage.save_fund_nav(nav_data)
                     print(f"  {code}: 净值更新 {len(nav_data)} 条")
+
+            # 4. 更新板块数据
+            print("[调度器] 4/4 更新板块数据...")
+            today = date_type.today()
+            for board_type in ("concept", "industry"):
+                print(f"  [{board_type}] 采集板块排名...")
+                sector_list = await asyncio.to_thread(
+                    source.get_sector_list, sector_type=board_type
+                )
+                if sector_list:
+                    # 附加快照日期
+                    for s in sector_list:
+                        s["snap_date"] = today
+                    await storage.save_sector_board(sector_list)
+                    print(f"    [{board_type}] 排名更新 {len(sector_list)} 条")
+
+                    # 采集热门板块（涨跌幅 Top10）的历史K线
+                    hot_names = await storage.get_hot_sectors(
+                        sector_type=board_type, top_n=10
+                    )
+                    for name in hot_names:
+                        hist = await asyncio.to_thread(
+                            source.get_sector_hist, sector_name=name, days=30,
+                            sector_type=board_type
+                        )
+                        if hist:
+                            await storage.save_sector_daily(hist)
+                            print(f"      {name}: K线更新 {len(hist)} 条")
+                else:
+                    print(f"    [{board_type}] 无数据")
 
             print("[调度器] 每日数据更新完成")
 

@@ -348,6 +348,10 @@ class DataStorage:
         """
         try:
             for data in daily_list:
+                # 兼容 name → sector_name 字段映射
+                if "name" in data and "sector_name" not in data:
+                    data["sector_name"] = data.pop("name")
+
                 result = await self._db.execute(
                     select(SectorDaily).where(
                         SectorDaily.sector_name == data["sector_name"],

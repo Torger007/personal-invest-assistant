@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.utils.db import get_db
 from app.services.data_collector.storage import DataStorage
+from app.services.analyzer.sector import SectorAnalyzer
 
 router = APIRouter(prefix="/market", tags=["市场"])
 
@@ -101,10 +102,105 @@ async def get_fund_flow(days: int = 30, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/sectors")
-async def get_sectors(db: AsyncSession = Depends(get_db)):
-    """获取板块数据（暂未采集，返回占位）"""
-    return {
-        "sectors": [],
-        "update_time": None,
-        "message": "板块数据采集功能开发中"
-    }
+async def get_sectors(
+    sector_type: str = Query("concept", description="板块类型: concept=概念板块, industry=行业板块"),
+    limit: int = Query(50, ge=1, le=200, description="返回条数"),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取板块涨跌排名"""
+    storage = DataStorage(db)
+
+    if sector_type not in ("concept", "industry"):
+        return {
+            "sectors": [],
+            "update_time": None,
+            "message": f"不支持的板块类型: {sector_type}，可选 concept / industry"
+        }
+
+    try:
+        sectors = await storage.get_sector_board(sector_type=sector_type, limit=limit)
+
+        if not sectors:
+            return {
+                "sectors": [],
+                "update_time": None,
+                "message": f"暂无{sector_type}板块数据，请先采集"
+            }
+
+        update_time = sectors[0].get("snap_date") if sectors else None
+
+        return {
+            "sectors": sectors,
+            "update_time": update_time,
+            "sector_type": sector_type,
+            "total": len(sectors)
+        }
+    except Exception as e:
+        return {
+            "sectors": [],
+            "update_time": None,
+            "message": f"查询板块数据失败: {str(e)}"
+        }
+
+
+@router.get("/sectors/{name}/hist")
+async def get_sector_hist(
+    name: str,
+    days: int = Query(30, ge=1, le=365, description="查询天数"),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取单个板块的历史K线数据
+
+    Args:
+        name: 板块名称（中文），如 "人工智能"、"半导体"
+        days: 查询天数
+    """
+    storage = DataStorage(db)
+    try:
+        data = await storage.get_sector_daily_hist(sector_name=name, days=days)
+        # 倒序转正序（便于前端绘制K线）
+        klines = list(reversed(data))
+        return {
+            "sector_name": name,
+            "klines": klines,
+            "count": len(klines)
+        }
+    except Exception as e:
+        return {"error": str(e), "sector_name": name, "klines": [], "count": 0}
+
+
+@router.get("/sectors/trend")
+async def get_sector_trend(
+    sector_type: str = Query("concept", description="板块类型"),
+    limit: int = Query(50, ge=1, le=200, description="分析板块数"),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取板块轮动趋势分析
+
+    基于涨幅排名和资金流向，分析板块强弱与轮动信号
+    """
+    storage = DataStorage(db)
+    try:
+        sectors = await storage.get_sector_board(sector_type=sector_type, limit=limit)
+
+        if not sectors:
+            return {
+                "status": "no_data",
+                "message": "暂无板块数据，请先采集"
+            }
+
+        # 调用分析器
+        analyzer = SectorAnalyzer()
+        result = analyzer.analyze(sectors)
+
+        return {
+            "status": "ok",
+            "sector_type": sector_type,
+            "update_time": sectors[0].get("snap_date") if sectors else None,
+            "analysis": result
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"分析失败: {str(e)}"
+        }

@@ -27,7 +27,7 @@ if config.config_file_name is not None:
 
 # 导入所有模型，确保 Base.metadata 包含所有表
 from app.utils.db import Base
-from app.models import Fund, IndexDaily, FundFlow, AdviceRecord
+from app.models import Fund, IndexDaily, FundFlow, SectorBoard, SectorDaily, AdviceRecord
 from app.models.agent import AgentSettings, AgentAnalysis
 
 target_metadata = Base.metadata
