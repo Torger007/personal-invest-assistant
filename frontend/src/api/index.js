@@ -17,7 +17,8 @@ export const marketApi = {
 export const fundApi = {
   getList: () => api.get('/funds/'),
   getDetail: (code) => api.get(`/funds/${code}`),
-  getNav: (code, days = 30) => api.get(`/funds/${code}/nav`, { params: { days } })
+  getNav: (code, days = 30) => api.get(`/funds/${code}/nav`, { params: { days } }),
+  refresh: (code, days = 90) => api.post(`/funds/${code}/refresh`, null, { params: { days } })
 }
 
 // 建议相关

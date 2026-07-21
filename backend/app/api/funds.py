@@ -63,20 +63,65 @@ async def get_fund(fund_code: str, db: AsyncSession = Depends(get_db)):
 
 @router.get("/{fund_code}/nav")
 async def get_fund_nav(fund_code: str, days: int = 30, db: AsyncSession = Depends(get_db)):
-    """获取基金净值历史（如果数据库无数据则实时从AKShare获取并入库）"""
+    """获取基金净值历史（数据不足时自动从AKShare补充采集）"""
     storage = DataStorage(db)
 
     # 先查数据库
     nav_data = await storage.get_fund_nav_history(fund_code, days=days)
 
-    # 数据库无数据时，实时获取并入库
-    if not nav_data:
+    # 数据不足时，从AKShare补充采集
+    if len(nav_data) < days:
         source = AkShareSource()
+        # 采集更多数据以确保覆盖需求（AKShare可能返回更少）
         raw_data = await asyncio.to_thread(source.get_fund_nav, fund_code, days)
         if raw_data:
             await storage.save_fund_nav(raw_data)
+            # 重新查询
             nav_data = await storage.get_fund_nav_history(fund_code, days=days)
 
     # 倒序转为正序（便于前端绘制图表）
     nav_data.reverse()
     return {"fund_code": fund_code, "nav": nav_data, "count": len(nav_data)}
+
+
+@router.post("/{fund_code}/refresh")
+async def refresh_fund_data(fund_code: str, days: int = 90, db: AsyncSession = Depends(get_db)):
+    """手动刷新单只基金数据（基本信息 + 净值历史）
+
+    Args:
+        fund_code: 基金代码
+        days: 刷新多少天的净值数据，默认90天
+    """
+    source = AkShareSource()
+    storage = DataStorage(db)
+
+    results = {"fund_code": fund_code, "success": [], "errors": []}
+
+    # 1. 刷新基金基本信息
+    try:
+        info = await asyncio.to_thread(source.get_fund_info, fund_code)
+        name = info.get("name") if info else None
+        if name and len(name.strip()) > 0:
+            await storage.save_fund_info(info)
+            results["success"].append("基金信息已更新")
+        else:
+            results["errors"].append("未找到基金信息")
+    except Exception as e:
+        results["errors"].append(f"基金信息更新失败: {str(e)}")
+
+    # 2. 刷新净值数据
+    try:
+        nav_data = await asyncio.to_thread(source.get_fund_nav, fund_code, days)
+        if nav_data:
+            await storage.save_fund_nav(nav_data)
+            results["success"].append(f"净值数据已更新 {len(nav_data)} 条")
+        else:
+            results["errors"].append("未获取到净值数据")
+    except Exception as e:
+        results["errors"].append(f"净值数据更新失败: {str(e)}")
+
+    # 3. 返回最新数据统计
+    nav_count = await storage.get_fund_nav_history(fund_code, days=365)
+    results["nav_count"] = len(nav_count)
+
+    return results

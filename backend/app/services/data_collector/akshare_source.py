@@ -188,25 +188,43 @@ class AkShareSource:
         Returns:
             Dict: 包含 code/name/type 等信息
         """
+        # 主数据源：fund_name_em
+        for attempt in range(3):
+            try:
+                df = ak.fund_name_em()
+                if df is not None and not df.empty:
+                    row = df[df["基金代码"].astype(str) == str(fund_code)]
+                    if not row.empty:
+                        row = row.iloc[0]
+                        name = str(row.get("基金简称", "")).strip()
+                        fund_type = str(row.get("基金类型", "")).strip()
+                        if name:
+                            return {
+                                "code": fund_code,
+                                "name": name,
+                                "type": fund_type,
+                            }
+            except Exception as e:
+                print(f"[AKShare] fund_name_em 失败 (尝试 {attempt+1}/3): {e}")
+                if attempt < 2:
+                    import time
+                    time.sleep(0.5)
+
+        # 备用数据源：从净值接口获取基金名称
         try:
-            df = ak.fund_name_em()
+            df = ak.fund_open_fund_info_em(symbol=fund_code, indicator="单位净值走势")
+            if df is not None and not df.empty:
+                # 尝试从数据中提取基金名称（如果有的话）
+                # 或者返回一个基础结构，让调用方知道至少净值接口可用
+                return {
+                    "code": fund_code,
+                    "name": f"基金{fund_code}",  # 临时名称
+                    "type": "未知",
+                }
         except Exception as e:
-            print(f"[AKShare] 获取基金列表失败: {e}")
-            return {}
+            print(f"[AKShare] 备用数据源也失败: {e}")
 
-        if df is None or df.empty:
-            return {}
-
-        row = df[df["基金代码"].astype(str) == str(fund_code)]
-        if row.empty:
-            return {"code": fund_code}
-
-        row = row.iloc[0]
-        return {
-            "code": fund_code,
-            "name": str(row.get("基金简称", "")),
-            "type": str(row.get("基金类型", "")),
-        }
+        return {"code": fund_code}
 
     def get_fund_list(self) -> List[Dict]:
         """获取全市场基金列表

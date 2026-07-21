@@ -13,7 +13,26 @@
           <span class="fund-code">{{ fund.code || code }}</span>
         </div>
       </div>
+      <div class="header-right">
+        <el-button type="primary" @click="refreshData" :loading="refreshing" class="refresh-btn">
+          <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M23 4v6h-6M1 20v-6h6"/>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+          </svg>
+          {{ refreshing ? '刷新中...' : '刷新数据' }}
+        </el-button>
+      </div>
     </div>
+
+    <!-- 数据状态提示 -->
+    <el-alert
+      v-if="navData.length < navDays"
+      :title="'当前数据不足' + navDays + '天，共' + navData.length + '条记录，点击「刷新数据」补充历史数据'"
+      type="info"
+      show-icon
+      class="data-alert"
+      :closable="false"
+    />
 
     <!-- 摘要卡片 -->
     <div class="summary-grid">
@@ -136,6 +155,9 @@
             </svg>
             净值明细
           </div>
+          <div class="table-actions">
+            <el-tag v-if="navData.length > 0" type="info" size="small">共 {{ navData.length }} 条</el-tag>
+          </div>
         </div>
       </template>
       <el-table :data="navData.slice().reverse()" stripe v-loading="loadingNav" max-height="400" class="nav-table">
@@ -169,6 +191,7 @@ import { ref, computed, onMounted, nextTick, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import * as echarts from 'echarts'
 import { fundApi } from '../api'
+import { ElMessage } from 'element-plus'
 
 const route = useRoute()
 const code = route.params.code
@@ -178,6 +201,7 @@ const navData = ref([])
 const navDays = 90
 const loadingFund = ref(false)
 const loadingNav = ref(false)
+const refreshing = ref(false)
 const chartRef = ref(null)
 let chart = null
 
@@ -244,6 +268,26 @@ const loadNav = async () => {
     console.error('加载净值数据失败', e)
   } finally {
     loadingNav.value = false
+  }
+}
+
+const refreshData = async () => {
+  refreshing.value = true
+  try {
+    const { data } = await fundApi.refresh(code, navDays)
+    if (data.errors && data.errors.length > 0) {
+      ElMessage.warning(`刷新完成，但有错误: ${data.errors.join(', ')}`)
+    } else {
+      ElMessage.success(`数据刷新成功！共 ${data.nav_count} 条记录`)
+    }
+    // 刷新完成后重新加载数据
+    await loadNav()
+    await loadChart()
+  } catch (e) {
+    console.error('刷新数据失败', e)
+    ElMessage.error('刷新数据失败')
+  } finally {
+    refreshing.value = false
   }
 }
 
@@ -346,6 +390,29 @@ onBeforeUnmount(() => {
 /* === Page Header === */
 .page-header {
   margin-bottom: var(--spacing-lg);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.header-right {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+.refresh-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.data-alert {
+  margin-bottom: var(--spacing-md);
+}
+
+.table-actions {
+  display: flex;
+  gap: var(--spacing-sm);
 }
 
 .header-left {
