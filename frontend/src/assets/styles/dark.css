@@ -1,0 +1,85 @@
+/* ========================================
+   Dark Mode Styles
+   ======================================== */
+
+html.dark {
+  /* === Background Colors === */
+  --color-background: #0F172A;
+  --color-surface: #1E293B;
+  --color-surface-elevated: #334155;
+  --color-muted: #1E293B;
+  --color-border: #334155;
+  --color-border-light: #1E293B;
+
+  /* === Text Colors === */
+  --color-foreground: #F1F5F9;
+  --color-foreground-secondary: #94A3B8;
+  --color-foreground-muted: #64748B;
+  --color-foreground-disabled: #475569;
+
+  /* === Shadows === */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.32);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --shadow-hover: 0 8px 32px rgba(0, 0, 0, 0.48);
+
+  /* === Chart Colors === */
+  --chart-grid: #334155;
+  --chart-area-up: rgba(220, 38, 38, 0.2);
+  --chart-area-down: rgba(22, 163, 74, 0.2);
+}
+
+/* Dark mode specific overrides */
+html.dark .el-card {
+  background-color: var(--color-surface);
+}
+
+html.dark .el-table {
+  --el-table-bg-color: var(--color-surface);
+  --el-table-tr-bg-color: var(--color-surface);
+  --el-table-header-bg-color: var(--color-muted);
+  --el-table-row-hover-bg-color: var(--color-surface-elevated);
+}
+
+html.dark .el-input__wrapper {
+  background-color: var(--color-surface);
+}
+
+html.dark .el-menu--horizontal .el-menu-item:hover {
+  background-color: rgba(59, 130, 246, 0.15);
+}
+
+html.dark .el-alert--warning {
+  background-color: rgba(217, 119, 6, 0.15);
+}
+
+html.dark .el-descriptions {
+  --el-descriptions-item-bordered-label-background: var(--color-muted);
+}
+
+html.dark .el-dialog,
+html.dark .el-drawer {
+  background-color: var(--color-surface);
+}
+
+html.dark .skeleton {
+  background: linear-gradient(90deg, var(--color-muted) 0%, var(--color-surface-elevated) 50%, var(--color-muted) 100%);
+}
+
+/* Dark mode chart background */
+html.dark .chart-container {
+  background: linear-gradient(180deg, var(--color-surface) 0%, var(--color-background) 100%);
+}
+
+/* Dark mode scrollbar */
+html.dark ::-webkit-scrollbar-track {
+  background: var(--color-background);
+}
+
+html.dark ::-webkit-scrollbar-thumb {
+  background: var(--color-surface-elevated);
+}
+
+html.dark ::-webkit-scrollbar-thumb:hover {
+  background: var(--color-foreground-muted);
+}
