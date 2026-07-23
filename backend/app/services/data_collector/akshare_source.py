@@ -259,18 +259,21 @@ class AkShareSource:
     # ============== 资金流向 ==============
 
     def get_fund_flow(self, days: int = 30) -> List[Dict]:
-        """获取北向资金历史数据
+        """获取市场资金流向数据（主力/散户资金）
 
-        使用 akshare 的 stock_hsgt_hist_em 接口
-        symbol 可选: "沪股通" / "深股通" / "北向"（北向=沪股通+深股通）
+        使用 akshare 的 stock_market_fund_flow 接口。
+        原 stock_hsgt_hist_em 接口的北向资金字段已停用（全为 NaN）。
 
         Returns:
             List[Dict]: 每条包含 date/north_flow/main_flow/retail_flow
+                north_flow: 北向资金（已不可用，置为0）
+                main_flow: 主力净流入（大单+中单）
+                retail_flow: 散户净流入（小单）
         """
         try:
-            df = ak.stock_hsgt_hist_em(symbol="沪股通")
+            df = ak.stock_market_fund_flow()
         except Exception as e:
-            print(f"[AKShare] 获取北向资金数据失败: {e}")
+            print(f"[AKShare] 获取市场资金流向失败: {e}")
             return []
 
         if df is None or df.empty:
@@ -281,30 +284,37 @@ class AkShareSource:
         result = []
         for _, row in df.iterrows():
             try:
-                date_val = row["日期"]
+                date_val = row.iloc[0]  # 日期
                 if isinstance(date_val, str):
                     date_val = datetime.strptime(date_val, "%Y-%m-%d").date()
                 elif hasattr(date_val, "date"):
                     date_val = date_val.date()
 
-                # 当日成交净买额（akshare 单位：亿元），转为元
-                # 注意：字段可能是 NaN 或字符串
-                net_buy_raw = row.get("当日成交净买额")
-                if pd.isna(net_buy_raw) or net_buy_raw == '' or net_buy_raw == '-':
-                    net_buy = 0.0
-                else:
-                    net_buy = float(net_buy_raw)
+                # 列索引（基于 stock_market_fund_flow 返回列）:
+                # [0]=日期 [1]=上证-收盘价 [2]=上证-涨跌幅 [3]=深证-收盘价 [4]=深证-涨跌幅
+                # [5]=超大单净流入-金额 [6]=超大单净流入-占比
+                # [7]=大单净流入-金额 [8]=大单净流入-占比
+                # [9]=中单净流入-金额 [10]=中单净流入-占比
+                # [11]=小单净流入-金额 [12]=小单净流入-占比
+                # 主力 = 超大单 + 大单 + 中单
+                # 散户 = 小单
 
-                north_flow = net_buy * 1e8
+                super_large = float(row.iloc[5]) if len(row) > 5 and not pd.isna(row.iloc[5]) else 0.0
+                large = float(row.iloc[7]) if len(row) > 7 and not pd.isna(row.iloc[7]) else 0.0
+                medium = float(row.iloc[9]) if len(row) > 9 and not pd.isna(row.iloc[9]) else 0.0
+                small = float(row.iloc[11]) if len(row) > 11 and not pd.isna(row.iloc[11]) else 0.0
+
+                main_flow = super_large + large + medium
+                retail_flow = small
 
                 result.append({
                     "date": date_val,
-                    "north_flow": north_flow,
-                    "main_flow": 0.0,
-                    "retail_flow": 0.0,
+                    "north_flow": 0.0,  # 北向资金已不可用
+                    "main_flow": main_flow,
+                    "retail_flow": retail_flow,
                 })
             except Exception as e:
-                print(f"[AKShare] 解析北向资金行失败: {e}")
+                print(f"[AKShare] 解析资金流向行失败: {e}")
                 continue
 
         result.sort(key=lambda x: x["date"], reverse=True)
@@ -369,9 +379,11 @@ class AkShareSource:
         return result
 
     def _get_concept_list_ths(self) -> List[Dict]:
-        """从同花顺获取概念板块列表（仅名称+代码，无涨跌幅/成交量）
+        """从同花顺获取概念板块列表并计算涨跌幅
 
         列布局: [0]=name [1]=code
+        涨跌幅通过拉取板块指数历史计算（取最近2日收盘价）。
+        为控制请求量，只计算前50个热门板块（按名称排序）。
 
         Returns:
             List[Dict]
@@ -386,13 +398,38 @@ class AkShareSource:
             return []
 
         result = []
-        for _, row in df.iterrows():
+        # 限制计算涨跌幅的板块数量，避免请求过多
+        limit = min(50, len(df))
+
+        for idx, row in df.iterrows():
             try:
+                name = str(row.iloc[0])
+                code = str(row.iloc[1])
+
+                # 只计算前50个板块的涨跌幅
+                change_pct = 0.0
+                if idx < limit:
+                    try:
+                        # 获取最近2天的指数数据计算涨跌幅
+                        hist_df = ak.stock_board_concept_index_ths(
+                            symbol=name, start_date="20260101", end_date=date.today().strftime("%Y%m%d")
+                        )
+                        if hist_df is not None and len(hist_df) >= 2:
+                            # 取最后两行的收盘价（第5列）
+                            close_today = float(hist_df.iloc[-1].iloc[4])
+                            close_yest = float(hist_df.iloc[-2].iloc[4])
+                            if close_yest != 0:
+                                change_pct = (close_today - close_yest) / close_yest * 100
+                                change_pct = round(change_pct, 2)
+                    except Exception as e:
+                        # 静默失败，使用0.0
+                        pass
+
                 result.append({
-                    "code": str(row.iloc[1]),        # code
-                    "name": str(row.iloc[0]),         # name
+                    "code": code,
+                    "name": name,
                     "type": "concept",
-                    "change_pct": 0.0,
+                    "change_pct": change_pct,
                     "volume": 0.0,
                     "amount": 0.0,
                     "leader": "",
@@ -401,6 +438,8 @@ class AkShareSource:
             except Exception:
                 continue
 
+        # 按涨跌幅降序排列
+        result.sort(key=lambda x: x["change_pct"], reverse=True)
         return result
 
     def get_sector_hist(self, sector_name: str, days: int = 30,
