@@ -20,7 +20,8 @@ class OpenAIProvider(BaseLLMProvider):
         self,
         messages: List[Dict[str, str]],
         tools: Optional[List[Dict]] = None,
-        max_tokens: int = 4000
+        max_tokens: int = 4000,
+        system_prompt: Optional[str] = None,
     ) -> LLMResponse:
         # 转换工具格式（OpenAI 使用 function calling）
         openai_tools = None
@@ -37,10 +38,17 @@ class OpenAIProvider(BaseLLMProvider):
                 for tool in tools
             ]
 
+        request_messages = messages
+        if system_prompt:
+            request_messages = [
+                {"role": "system", "content": system_prompt},
+                *messages,
+            ]
+
         # 调用 API
         response = await self.client.chat.completions.create(
             model=self.model,
-            messages=messages,
+            messages=request_messages,
             tools=openai_tools,
             max_tokens=max_tokens
         )

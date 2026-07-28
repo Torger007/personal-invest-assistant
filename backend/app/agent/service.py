@@ -8,6 +8,7 @@ import logging
 from sqlalchemy import select
 
 from app.agent.core import AgentCore
+from app.agent.prompt_loader import get_agent_system_prompt, render_agent_prompt
 from app.portfolio import get_portfolio_codes, get_portfolio_info
 from app.models.agent import AgentAnalysis
 from app.utils.db import AsyncSessionLocal
@@ -36,24 +37,14 @@ class AgentService:
             for fund in portfolio
         ])
 
-        prompt = f"""你是一个专业的投资分析 agent。现在是收盘后，请分析我的持仓基金并给出投资建议。
-
-我的持仓：
-{portfolio_str}
-
-请按照以下步骤分析：
-1. 获取三大指数（上证 000001、深证 399001、创业板 399006）的近 30 天行情
-2. 获取北向资金近 30 天数据
-3. 对每只持仓基金逐一分析：
-   - 先获取基金信息
-   - 获取近 30 天净值数据
-   - 对净值数据做技术分析
-4. 综合各维度信息，给出每只基金的操作建议（加仓/持有/减仓）和仓位调整建议，并说明理由。
-
-请确保使用工具获取实时数据，不要凭空猜测。"""
+        prompt = render_agent_prompt(
+            "autonomous_portfolio_analysis",
+            portfolio=portfolio_str,
+        )
+        system_prompt = get_agent_system_prompt()
 
         self.core.reset()
-        result = await self.core.run(prompt)
+        result = await self.core.run(prompt, system_prompt=system_prompt)
 
         duration = int(time.time() - start_time)
 
@@ -78,16 +69,15 @@ class AgentService:
         start_time = time.time()
 
         portfolio_codes = get_portfolio_codes()
-        context_prompt = f"""你是一个专业的投资分析 agent。用户会问你关于投资的问题。
-
-用户关注的基金代码：{', '.join(portfolio_codes)}
-
-请基于实时数据和专业知识回答问题。如果需要使用工具获取数据，请调用相应工具。
-
-用户问题：{question}"""
+        context_prompt = render_agent_prompt(
+            "interactive_question",
+            portfolio_codes=", ".join(portfolio_codes),
+            question=question,
+        )
+        system_prompt = get_agent_system_prompt()
 
         self.core.reset()
-        result = await self.core.run(context_prompt)
+        result = await self.core.run(context_prompt, system_prompt=system_prompt)
 
         duration = int(time.time() - start_time)
 

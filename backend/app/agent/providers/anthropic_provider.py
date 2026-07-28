@@ -19,7 +19,8 @@ class AnthropicProvider(BaseLLMProvider):
         self,
         messages: List[Dict[str, str]],
         tools: Optional[List[Dict]] = None,
-        max_tokens: int = 4000
+        max_tokens: int = 4000,
+        system_prompt: Optional[str] = None,
     ) -> LLMResponse:
         # 转换工具格式（Anthropic 使用 input_schema）
         anthropic_tools = None
@@ -38,6 +39,7 @@ class AnthropicProvider(BaseLLMProvider):
             model=self.model,
             max_tokens=max_tokens,
             messages=messages,
+            system=system_prompt or None,
             tools=anthropic_tools
         )
 

@@ -32,7 +32,8 @@ class BaseLLMProvider(ABC):
         self,
         messages: List[Dict[str, str]],
         tools: Optional[List[Dict]] = None,
-        max_tokens: int = 4000
+        max_tokens: int = 4000,
+        system_prompt: Optional[str] = None,
     ) -> LLMResponse:
         """发送聊天请求
 
@@ -40,6 +41,7 @@ class BaseLLMProvider(ABC):
             messages: 消息列表，每个消息包含 role 和 content
             tools: 可用工具列表（可选）
             max_tokens: 最大生成 token 数
+            system_prompt: 系统提示词（可选）
 
         Returns:
             LLMResponse: LLM 响应对象

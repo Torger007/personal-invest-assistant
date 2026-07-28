@@ -25,12 +25,13 @@ class AgentCore:
         self.tools = tool_registry
         self.conversation: List[Dict[str, str]] = []
 
-    async def run(self, user_input: str) -> str:
+    async def run(self, user_input: str, system_prompt: str | None = None) -> str:
         """
         运行 Agent（工具调用循环）
 
         Args:
             user_input: 用户输入
+            system_prompt: 系统提示词
 
         Returns:
             str: Agent 最终回答
@@ -46,7 +47,8 @@ class AgentCore:
             # 调用 LLM
             response: LLMResponse = await self.llm.chat(
                 messages=self.conversation,
-                tools=self.tools.get_definitions()
+                tools=self.tools.get_definitions(),
+                system_prompt=system_prompt
             )
 
             # 检查是否需要调用工具
