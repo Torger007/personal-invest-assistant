@@ -67,7 +67,7 @@
     </el-header>
 
     <el-main class="app-main">
-      <router-view />
+      <router-view @open-ai-drawer="drawerVisible = true" />
     </el-main>
 
     <!-- AI 助手侧边栏 -->
@@ -165,6 +165,18 @@
         </div>
       </div>
     </el-drawer>
+
+    <!-- 悬浮 AI 助手球 -->
+    <div class="ai-fab" @click="drawerVisible = true" v-if="!drawerVisible">
+      <div class="ai-fab-inner">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2a10 10 0 1 0 10 10H12V2z"/>
+          <path d="M12 2a10 10 0 0 1 10 10"/>
+          <circle cx="12" cy="12" r="4"/>
+        </svg>
+      </div>
+      <div class="ai-fab-pulse"></div>
+    </div>
   </el-container>
 </template>
 
@@ -510,6 +522,54 @@ const handleDrawerClose = (done) => {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/* === AI Floating Action Button === */
+.ai-fab {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  width: 56px;
+  height: 56px;
+  cursor: pointer;
+  z-index: var(--z-modal);
+}
+
+.ai-fab-inner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--color-accent) 0%, #F59E0B 100%);
+  border-radius: 50%;
+  box-shadow: 0 4px 16px rgba(217, 119, 6, 0.4);
+  transition: all 0.3s ease;
+}
+
+.ai-fab:hover .ai-fab-inner {
+  transform: scale(1.1);
+  box-shadow: 0 6px 24px rgba(217, 119, 6, 0.5);
+}
+
+.ai-fab-inner svg {
+  width: 28px;
+  height: 28px;
+  color: white;
+}
+
+.ai-fab-pulse {
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid var(--color-accent);
+  opacity: 0;
+  animation: pulse-ring 2s ease-out infinite;
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(1.3); opacity: 0; }
 }
 
 /* === Responsive === */

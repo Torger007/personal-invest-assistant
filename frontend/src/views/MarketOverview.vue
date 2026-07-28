@@ -75,6 +75,28 @@
       </el-card>
     </div>
 
+    <!-- AI 快捷入口卡片 -->
+    <div class="ai-quick-card" @click="openAiDrawer">
+      <div class="ai-quick-content">
+        <div class="ai-quick-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2a10 10 0 1 0 10 10H12V2z"/>
+            <path d="M12 2a10 10 0 0 1 10 10"/>
+            <circle cx="12" cy="12" r="4"/>
+          </svg>
+        </div>
+        <div class="ai-quick-text">
+          <h3>AI 投资助手</h3>
+          <p>获取个性化投资建议 · 分析基金走势</p>
+        </div>
+      </div>
+      <div class="ai-quick-arrow">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M5 12h14M12 5l7 7-7 7"/>
+        </svg>
+      </div>
+    </div>
+
     <!-- 资金流向 -->
     <el-card class="fund-flow-card">
       <template #header>
@@ -147,6 +169,8 @@ import { ref, computed, onMounted, nextTick, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import { marketApi, taskApi } from '../api'
+
+const emit = defineEmits(['open-ai-drawer'])
 
 const router = useRouter()
 const indices = ref([])
@@ -295,6 +319,10 @@ const goIndexDetail = (code) => {
   router.push(`/funds/${code}`)
 }
 
+const openAiDrawer = () => {
+  emit('open-ai-drawer')
+}
+
 const loadStatus = async () => {
   try {
     const { data } = await taskApi.getStatus()
@@ -377,6 +405,77 @@ onBeforeUnmount(() => {
   .indices-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* === AI Quick Card === */
+.ai-quick-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-lg);
+  background: linear-gradient(135deg, rgba(30, 64, 175, 0.08) 0%, rgba(217, 119, 6, 0.08) 100%);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  margin-bottom: var(--spacing-lg);
+}
+
+.ai-quick-card:hover {
+  border-color: var(--color-accent);
+  box-shadow: 0 4px 20px rgba(217, 119, 6, 0.15);
+  transform: translateY(-2px);
+}
+
+.ai-quick-content {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+}
+
+.ai-quick-icon {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--color-accent), #F59E0B);
+  border-radius: var(--radius-lg);
+  color: white;
+  box-shadow: 0 2px 8px rgba(217, 119, 6, 0.3);
+}
+
+.ai-quick-icon svg {
+  width: 24px;
+  height: 24px;
+}
+
+.ai-quick-text h3 {
+  margin: 0;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-foreground);
+}
+
+.ai-quick-text p {
+  margin: 4px 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-foreground-secondary);
+}
+
+.ai-quick-arrow {
+  color: var(--color-accent);
+  transition: transform 0.3s ease;
+}
+
+.ai-quick-card:hover .ai-quick-arrow {
+  transform: translateX(4px);
+}
+
+.ai-quick-arrow svg {
+  width: 20px;
+  height: 20px;
 }
 
 .index-card {
