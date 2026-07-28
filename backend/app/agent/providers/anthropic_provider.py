@@ -1,5 +1,5 @@
 """Anthropic Claude API Provider 实现"""
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 from anthropic import AsyncAnthropic
 from app.agent.providers.base import BaseLLMProvider, LLMResponse, ToolCall
 
@@ -17,7 +17,7 @@ class AnthropicProvider(BaseLLMProvider):
 
     async def chat(
         self,
-        messages: List[Dict[str, str]],
+        messages: List[Dict[str, Any]],
         tools: Optional[List[Dict]] = None,
         max_tokens: int = 4000,
         system_prompt: Optional[str] = None,
@@ -38,18 +38,18 @@ class AnthropicProvider(BaseLLMProvider):
         response = await self.client.messages.create(
             model=self.model,
             max_tokens=max_tokens,
-            messages=messages,
+            messages=self._convert_messages(messages),
             system=system_prompt or None,
             tools=anthropic_tools
         )
 
         # 解析响应
-        content = None
+        text_blocks = []
         tool_calls = []
 
         for block in response.content:
             if block.type == "text":
-                content = block.text
+                text_blocks.append(block.text)
             elif block.type == "tool_use":
                 tool_calls.append(ToolCall(
                     id=block.id,
@@ -58,7 +58,7 @@ class AnthropicProvider(BaseLLMProvider):
                 ))
 
         return LLMResponse(
-            content=content,
+            content="\n".join(text_blocks) if text_blocks else None,
             tool_calls=tool_calls if tool_calls else None,
             usage={
                 "input_tokens": response.usage.input_tokens,
@@ -68,3 +68,54 @@ class AnthropicProvider(BaseLLMProvider):
 
     def get_provider_name(self) -> str:
         return "anthropic"
+
+    def _convert_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Convert normalized agent messages to Anthropic Messages API format."""
+        converted = []
+
+        for message in messages:
+            role = message.get("role")
+
+            if role == "tool":
+                tool_result = {
+                    "type": "tool_result",
+                    "tool_use_id": message["tool_call_id"],
+                    "content": message.get("content", ""),
+                }
+                if converted and converted[-1]["role"] == "user" and isinstance(converted[-1]["content"], list):
+                    converted[-1]["content"].append(tool_result)
+                else:
+                    converted.append({
+                        "role": "user",
+                        "content": [tool_result],
+                    })
+                continue
+
+            if role == "assistant" and message.get("tool_calls"):
+                content = []
+                if message.get("content"):
+                    content.append({
+                        "type": "text",
+                        "text": message["content"],
+                    })
+                content.extend([
+                    {
+                        "type": "tool_use",
+                        "id": tool_call["id"],
+                        "name": tool_call["name"],
+                        "input": tool_call.get("arguments", {}),
+                    }
+                    for tool_call in message["tool_calls"]
+                ])
+                converted.append({
+                    "role": "assistant",
+                    "content": content,
+                })
+                continue
+
+            converted.append({
+                "role": role,
+                "content": message.get("content", ""),
+            })
+
+        return converted

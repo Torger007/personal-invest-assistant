@@ -30,7 +30,7 @@ class BaseLLMProvider(ABC):
     @abstractmethod
     async def chat(
         self,
-        messages: List[Dict[str, str]],
+        messages: List[Dict[str, Any]],
         tools: Optional[List[Dict]] = None,
         max_tokens: int = 4000,
         system_prompt: Optional[str] = None,
@@ -38,7 +38,7 @@ class BaseLLMProvider(ABC):
         """发送聊天请求
 
         Args:
-            messages: 消息列表，每个消息包含 role 和 content
+            messages: 标准化消息列表，支持 user/assistant/tool role
             tools: 可用工具列表（可选）
             max_tokens: 最大生成 token 数
             system_prompt: 系统提示词（可选）

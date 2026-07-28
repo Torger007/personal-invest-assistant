@@ -1,6 +1,6 @@
 """OpenAI GPT API Provider 实现"""
 import json
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 from openai import AsyncOpenAI
 from app.agent.providers.base import BaseLLMProvider, LLMResponse, ToolCall
 
@@ -18,7 +18,7 @@ class OpenAIProvider(BaseLLMProvider):
 
     async def chat(
         self,
-        messages: List[Dict[str, str]],
+        messages: List[Dict[str, Any]],
         tools: Optional[List[Dict]] = None,
         max_tokens: int = 4000,
         system_prompt: Optional[str] = None,
@@ -38,11 +38,11 @@ class OpenAIProvider(BaseLLMProvider):
                 for tool in tools
             ]
 
-        request_messages = messages
+        request_messages = self._convert_messages(messages)
         if system_prompt:
             request_messages = [
                 {"role": "system", "content": system_prompt},
-                *messages,
+                *request_messages,
             ]
 
         # 调用 API
@@ -77,3 +77,44 @@ class OpenAIProvider(BaseLLMProvider):
 
     def get_provider_name(self) -> str:
         return "openai"
+
+    def _convert_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Convert normalized agent messages to OpenAI chat messages."""
+        converted = []
+
+        for message in messages:
+            role = message.get("role")
+
+            if role == "tool":
+                converted.append({
+                    "role": "tool",
+                    "tool_call_id": message["tool_call_id"],
+                    "content": message.get("content", ""),
+                })
+                continue
+
+            converted_message = {
+                "role": role,
+                "content": message.get("content", ""),
+            }
+
+            if role == "assistant" and message.get("tool_calls"):
+                converted_message["tool_calls"] = [
+                    {
+                        "id": tool_call["id"],
+                        "type": "function",
+                        "function": {
+                            "name": tool_call["name"],
+                            "arguments": json.dumps(
+                                tool_call.get("arguments", {}),
+                                ensure_ascii=False,
+                                default=str,
+                            ),
+                        },
+                    }
+                    for tool_call in message["tool_calls"]
+                ]
+
+            converted.append(converted_message)
+
+        return converted

@@ -6,7 +6,7 @@ Agent Core
 """
 import json
 import logging
-from typing import List, Dict
+from typing import Any, List, Dict
 
 from app.agent.providers import create_provider, LLMResponse
 from app.agent.tools import tool_registry
@@ -23,7 +23,7 @@ class AgentCore:
     def __init__(self):
         self.llm = create_provider()
         self.tools = tool_registry
-        self.conversation: List[Dict[str, str]] = []
+        self.conversation: List[Dict[str, Any]] = []
 
     async def run(self, user_input: str, system_prompt: str | None = None) -> str:
         """
@@ -53,12 +53,19 @@ class AgentCore:
 
             # 检查是否需要调用工具
             if response.tool_calls:
-                # 添加 assistant 消息（包含思考/中间内容）
-                if response.content:
-                    self.conversation.append({
-                        "role": "assistant",
-                        "content": response.content
-                    })
+                # 添加标准 assistant tool-call 消息
+                self.conversation.append({
+                    "role": "assistant",
+                    "content": response.content or "",
+                    "tool_calls": [
+                        {
+                            "id": tool_call.id,
+                            "name": tool_call.name,
+                            "arguments": tool_call.arguments,
+                        }
+                        for tool_call in response.tool_calls
+                    ],
+                })
 
                 # 执行所有工具调用
                 for tool_call in response.tool_calls:
@@ -66,10 +73,12 @@ class AgentCore:
                     result = await self.tools.execute(tool_call.name, tool_call.arguments)
                     logger.info(f"[Agent] 工具 {tool_call.name} 返回: {result.get('status')}")
 
-                    # 添加工具结果
+                    # 添加标准 tool result 消息
                     self.conversation.append({
-                        "role": "user",
-                        "content": f"工具 {tool_call.name} 返回: {json.dumps(result, ensure_ascii=False, default=str)}"
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "name": tool_call.name,
+                        "content": json.dumps(result, ensure_ascii=False, default=str),
                     })
 
             else:
@@ -91,7 +100,7 @@ class AgentCore:
         """重置对话历史"""
         self.conversation = []
 
-    def get_conversation(self) -> List[Dict[str, str]]:
+    def get_conversation(self) -> List[Dict[str, Any]]:
         """获取当前对话历史"""
         return self.conversation.copy()
 
