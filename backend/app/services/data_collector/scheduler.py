@@ -26,6 +26,7 @@ async def daily_data_update():
     2. 更新资金流向
     3. 更新持仓基金信息 + 净值
     4. 更新板块排名 + 热门板块历史K线
+    5. 生成投资建议
     """
     from datetime import date as date_type
 
@@ -92,6 +93,15 @@ async def daily_data_update():
                             print(f"      {name}: K线更新 {len(hist)} 条")
                 else:
                     print(f"    [{board_type}] 无数据")
+
+            # 5. 生成投资建议
+            print("[调度器] 5/5 生成投资建议...")
+            try:
+                from app.services.advice_generator import generate_advice_for_portfolio
+                codes = await generate_advice_for_portfolio(session)
+                print(f"  {len(codes)} 只基金建议已生成")
+            except Exception as e:
+                print(f"[调度器] 建议生成失败: {e}")
 
             print("[调度器] 每日数据更新完成")
 

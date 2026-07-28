@@ -1,7 +1,22 @@
 <template>
   <div class="advice-report">
+    <!-- 页头 -->
     <div class="page-header">
-      <h2>投资建议</h2>
+      <div class="header-left">
+        <h2>投资建议</h2>
+        <span class="header-subtitle" v-if="adviceDate">更新于 {{ adviceDate }}</span>
+      </div>
+      <div class="header-actions">
+        <el-tag v-if="marketEnv" :type="envTagType(marketEnv)" size="small" class="env-tag">
+          {{ marketEnv }}
+        </el-tag>
+        <el-button type="primary" :loading="generating" @click="handleGenerate">
+          <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 12.728l-.707.707M12 21v-1m4.95-2.05l.707.707M4.95 4.95l.707.707"/>
+          </svg>
+          生成建议
+        </el-button>
+      </div>
     </div>
 
     <el-alert
@@ -18,70 +33,180 @@
       </template>
     </el-alert>
 
-    <el-card class="table-card" v-loading="loading">
-      <template #header>
-        <div class="card-header">
-          <div class="card-title">
-            <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/>
-              <rect x="9" y="3" width="6" height="4" rx="1"/>
-              <path d="M9 14l2 2 4-4"/>
+    <div v-loading="loading" class="page-body">
+      <!-- 统计指示卡 -->
+      <div class="stats-row" v-if="summary">
+        <div class="stat-card">
+          <div class="stat-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="3" width="20" height="14" rx="2"/>
+              <path d="M8 21h8M12 17v4"/>
             </svg>
-            最新建议列表
+          </div>
+          <div class="stat-body">
+            <div class="stat-label">持仓基金</div>
+            <div class="stat-value mono">{{ summary.total_funds }}</div>
           </div>
         </div>
-      </template>
 
-      <el-table :data="adviceList" stripe class="advice-table">
-        <el-table-column prop="fund_code" label="基金代码" width="120">
-          <template #default="{ row }">
-            <span class="mono code">{{ row.fund_code }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="date" label="日期" width="150">
-          <template #default="{ row }">
-            <span class="mono">{{ row.date }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="overall_signal" label="操作建议" width="160">
-          <template #default="{ row }">
-            <el-tag :type="signalTagType(row.overall_signal)" size="small" class="signal-tag">
-              {{ row.overall_signal || '--' }}
+        <div class="stat-card">
+          <div class="stat-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+              <path d="M2 17l10 5 10-5"/>
+              <path d="M2 12l10 5 10-5"/>
+            </svg>
+          </div>
+          <div class="stat-body">
+            <div class="stat-label">平均置信度</div>
+            <div class="stat-value mono">{{ summary.avg_confidence }}%</div>
+            <div class="stat-bar">
+              <div class="stat-bar-fill" :style="{ width: summary.avg_confidence + '%' }"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M7 7l9.2 9.2M17 7v10H7"/>
+            </svg>
+          </div>
+          <div class="stat-body">
+            <div class="stat-label">多空信号</div>
+            <div class="stat-signals">
+              <el-tag size="small" type="success" v-if="summary.bullish_count">{{ summary.bullish_count }}看多</el-tag>
+              <el-tag size="small" type="danger" v-if="summary.bearish_count">{{ summary.bearish_count }}看空</el-tag>
+              <el-tag size="small" type="info" v-if="summary.neutral_count">{{ summary.neutral_count }}中性</el-tag>
+              <span v-if="!summary.bullish_count && !summary.bearish_count && !summary.neutral_count" class="stat-na">暂无</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 3v18h18"/>
+              <path d="M7 16l4-4 4 4 5-6"/>
+            </svg>
+          </div>
+          <div class="stat-body">
+            <div class="stat-label">市场环境</div>
+            <div class="stat-value">
+              <el-tag :type="envTagType(marketEnv)" size="small">{{ marketEnv || '--' }}</el-tag>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 基金建议卡片网格 -->
+      <div class="fund-grid" v-if="portfolioFunds.length">
+        <div
+          v-for="f in portfolioFunds"
+          :key="f.fund_code"
+          class="fund-card"
+          :class="{ 'no-advice': !f.latest_advice }"
+        >
+          <div class="fund-card-header">
+            <el-tag
+              :type="signalTagType(f.latest_advice?.overall_signal)"
+              size="small"
+              class="signal-badge"
+            >
+              {{ f.latest_advice?.overall_signal || '暂无建议' }}
             </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="置信度" width="140">
-          <template #default="{ row }">
-            <div class="confidence-cell">
+            <span class="fund-weight">{{ (f.weight * 100).toFixed(0) }}%</span>
+          </div>
+
+          <div class="fund-card-body">
+            <div class="fund-name" :title="f.fund_name">{{ f.fund_name }}</div>
+            <div class="fund-code mono">{{ f.fund_code }}</div>
+
+            <div v-if="f.latest_advice" class="confidence-section">
+              <div class="confidence-label">
+                <span>置信度</span>
+                <span class="mono">{{ f.latest_advice.confidence ?? '--' }}%</span>
+              </div>
               <div class="confidence-bar">
                 <div
                   class="confidence-fill"
-                  :style="{ width: `${row.confidence || 0}%` }"
+                  :style="{ width: (f.latest_advice.confidence ?? 0) + '%' }"
                 ></div>
               </div>
-              <span class="confidence-value mono">{{ row.confidence ? row.confidence + '%' : '--' }}</span>
             </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="120" align="center">
-          <template #default="{ row }">
-            <el-button size="small" @click="viewDetail(row.fund_code)" class="detail-btn">
+
+            <div v-if="f.latest_advice?.scores" class="scores-mini">
+              <div class="score-dot">
+                <span class="score-dot-label">技术</span>
+                <span class="score-dot-value mono">{{ f.latest_advice.scores.technical ?? '--' }}</span>
+              </div>
+              <div class="score-dot">
+                <span class="score-dot-label">估值</span>
+                <span class="score-dot-value mono">{{ f.latest_advice.scores.valuation ?? '--' }}</span>
+              </div>
+              <div class="score-dot">
+                <span class="score-dot-label">资金</span>
+                <span class="score-dot-value mono">{{ f.latest_advice.scores.fund_flow ?? '--' }}</span>
+              </div>
+              <div class="score-dot">
+                <span class="score-dot-label">情绪</span>
+                <span class="score-dot-value mono">{{ f.latest_advice.scores.sentiment ?? '--' }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="fund-card-actions">
+            <el-button
+              size="small"
+              :disabled="!f.latest_advice"
+              @click="openDetail(f.fund_code, f.fund_name)"
+              class="detail-btn"
+            >
               <svg class="btn-icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
                 <circle cx="12" cy="12" r="3"/>
               </svg>
               详情
             </el-button>
+          </div>
+        </div>
+      </div>
+
+      <el-empty v-if="!loading && !portfolioFunds.length" description="暂无建议数据，请先点击「生成建议」" />
+
+      <!-- 图表区域 -->
+      <div v-if="hasHistory" class="charts-section">
+        <!-- 综合评分趋势 -->
+        <el-card class="chart-card">
+          <template #header>
+            <div class="card-header">
+              <div class="card-title">
+                <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M3 3v18h18"/>
+                  <path d="M7 14l4-4 4 4 5-6"/>
+                </svg>
+                综合评分趋势
+              </div>
+              <span class="card-badge">多基金叠加</span>
+            </div>
           </template>
-        </el-table-column>
-      </el-table>
+          <div class="chart-wrapper">
+            <div ref="trendChartRef" class="chart-container"></div>
+          </div>
+        </el-card>
+      </div>
+    </div>
 
-      <el-empty v-if="!loading && adviceList.length === 0" description="暂无建议记录，请先采集数据并生成建议" />
-    </el-card>
-
-    <!-- 建议详情对话框 -->
-    <el-dialog v-model="detailVisible" title="建议详情" width="760px" class="detail-dialog">
+    <!-- 详情弹窗 -->
+    <el-dialog
+      v-model="detailVisible"
+      :title="detailFundName || '建议详情'"
+      width="820px"
+      class="detail-dialog"
+      destroy-on-close
+    >
       <div v-if="detail" class="advice-detail">
+        <!-- 元数据头 -->
         <div class="detail-header">
           <div class="detail-meta">
             <div class="meta-item">
@@ -105,82 +230,126 @@
           </div>
         </div>
 
-        <div class="scores-section">
-          <h4 class="section-title">
-            <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M3 3v18h18"/>
-              <path d="M7 14l4-4 4 4 5-6"/>
-            </svg>
-            各维度评分
-          </h4>
-          <div class="scores-grid">
-            <div class="score-card">
-              <div class="score-label">技术面</div>
-              <div class="score-value">{{ detail.scores?.technical ?? '--' }}</div>
-            </div>
-            <div class="score-card">
-              <div class="score-label">估值面</div>
-              <div class="score-value">{{ detail.scores?.valuation ?? '--' }}</div>
-            </div>
-            <div class="score-card">
-              <div class="score-label">资金面</div>
-              <div class="score-value">{{ detail.scores?.fund_flow ?? '--' }}</div>
-            </div>
-            <div class="score-card">
-              <div class="score-label">情绪面</div>
-              <div class="score-value">{{ detail.scores?.sentiment ?? '--' }}</div>
+        <!-- 雷达图 + 趋势图并排 -->
+        <div class="detail-charts-row">
+          <div class="detail-chart-half">
+            <h4 class="section-title">维度评分雷达</h4>
+            <div ref="radarChartRef" class="radar-container"></div>
+          </div>
+          <div class="detail-chart-half">
+            <h4 class="section-title">历史评分趋势</h4>
+            <div ref="detailTrendRef" class="radar-container"></div>
+          </div>
+        </div>
+
+        <!-- 分维度详情 -->
+        <div class="dimensions-section">
+          <h4 class="section-title">各维度分析</h4>
+          <div class="dimensions-grid">
+            <div
+              v-for="dim in dimensions"
+              :key="dim.key"
+              class="dimension-card"
+              :class="dim.signalClass"
+            >
+              <div class="dim-header">
+                <span class="dim-name">{{ dim.label }}</span>
+                <el-tag :type="dim.tagType" size="small">{{ dim.signal }}</el-tag>
+                <span class="dim-conf mono">{{ dim.confidence }}%</span>
+              </div>
+              <div class="dim-reasons">
+                <p v-for="(r, ri) in dim.reasons" :key="ri">{{ r }}</p>
+                <p v-if="!dim.reasons?.length" class="dim-na">暂无详细理由</p>
+              </div>
             </div>
           </div>
         </div>
 
-        <div class="analysis-section">
-          <h4 class="section-title">
-            <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>
-            </svg>
-            分析详情
-          </h4>
-          <div class="analysis-content">
-            {{ detail.advice_text?.advice_text || detail.advice_text || '暂无详细分析' }}
-          </div>
-        </div>
+        <!-- 完整建议原文（折叠） -->
+        <el-collapse class="advice-collapse">
+          <el-collapse-item title="完整建议原文" name="advice-text">
+            <pre class="advice-raw">{{ detail.advice_text || '暂无' }}</pre>
+          </el-collapse-item>
+        </el-collapse>
       </div>
     </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick, onBeforeUnmount } from 'vue'
+import { ElMessage } from 'element-plus'
+import * as echarts from 'echarts'
 import { adviceApi } from '../api'
 
-const adviceList = ref([])
+// ============== 状态 ==============
 const loading = ref(false)
+const generating = ref(false)
+const portfolioFunds = ref([])
+const summary = ref(null)
+const marketEnv = ref(null)
+const adviceDate = ref(null)
+const fundHistories = ref({})  // { fund_code: [records] }
+
+// 详情弹窗
 const detailVisible = ref(false)
 const detail = ref(null)
+const detailFundName = ref('')
 
-const loadList = async () => {
-  loading.value = true
-  try {
-    const { data } = await adviceApi.getList()
-    adviceList.value = data.advice || []
-  } catch (e) {
-    console.error(e)
-  } finally {
-    loading.value = false
-  }
-}
+// 图表 refs
+const trendChartRef = ref(null)
+const radarChartRef = ref(null)
+const detailTrendRef = ref(null)
+let trendChart = null
+let radarChart = null
+let detailTrendChart = null
 
-const viewDetail = async (code) => {
-  try {
-    const { data } = await adviceApi.getFundAdvice(code)
-    detail.value = data
-    detailVisible.value = true
-  } catch (e) {
-    console.error(e)
-  }
-}
+// ============== 计算属性 ==============
+const hasHistory = computed(() => {
+  return Object.values(fundHistories.value).some(arr => arr.length > 1)
+})
 
+const dimensions = computed(() => {
+  if (!detail.value) return []
+  const scores = detail.value.scores || {}
+  const details = detail.value.details || {}
+  return [
+    {
+      key: 'technical', label: '技术面',
+      score: scores.technical, signal: details.technical?.signal || '--',
+      confidence: details.technical?.confidence ? (details.technical.confidence * 100).toFixed(0) : '--',
+      reasons: details.technical?.reasons || [],
+      tagType: signalTagType(details.technical?.signal),
+      signalClass: signalTagType(details.technical?.signal),
+    },
+    {
+      key: 'valuation', label: '估值面',
+      score: scores.valuation, signal: details.valuation?.signal || '--',
+      confidence: details.valuation?.confidence ? (details.valuation.confidence * 100).toFixed(0) : '--',
+      reasons: details.valuation?.reasons || [],
+      tagType: signalTagType(details.valuation?.signal),
+      signalClass: signalTagType(details.valuation?.signal),
+    },
+    {
+      key: 'fund_flow', label: '资金面',
+      score: scores.fund_flow, signal: details.fund_flow?.signal || '--',
+      confidence: details.fund_flow?.confidence ? (details.fund_flow.confidence * 100).toFixed(0) : '--',
+      reasons: details.fund_flow?.reasons || [],
+      tagType: signalTagType(details.fund_flow?.signal),
+      signalClass: signalTagType(details.fund_flow?.signal),
+    },
+    {
+      key: 'sentiment', label: '情绪面',
+      score: scores.sentiment, signal: details.sentiment?.signal || '--',
+      confidence: details.sentiment?.confidence ? (details.sentiment.confidence * 100).toFixed(0) : '--',
+      reasons: details.sentiment?.reasons || [],
+      tagType: signalTagType(details.sentiment?.signal),
+      signalClass: signalTagType(details.sentiment?.signal),
+    },
+  ]
+})
+
+// ============== 辅助函数 ==============
 const signalTagType = (signal) => {
   if (!signal) return 'info'
   if (signal.includes('加仓')) return 'success'
@@ -188,7 +357,316 @@ const signalTagType = (signal) => {
   return 'warning'
 }
 
-onMounted(loadList)
+const envTagType = (env) => {
+  if (!env) return 'info'
+  if (env === '牛市') return 'danger'
+  if (env === '熊市') return 'success'
+  return 'warning'
+}
+
+const FUND_COLORS = ['#1E40AF', '#D97706', '#DC2626', '#16A34A', '#0284C7', '#7C3AED']
+const FUND_NAMES = {}
+
+// ============== 数据加载 ==============
+const loadData = async () => {
+  loading.value = true
+  try {
+    const { data } = await adviceApi.getPortfolio()
+    portfolioFunds.value = data.funds || []
+    summary.value = data.summary || null
+    marketEnv.value = data.market_environment || null
+    adviceDate.value = data.summary?.advice_date || null
+
+    // 加载每只基金的历史数据
+    fundHistories.value = {}
+    const codes = (data.funds || []).map(f => f.fund_code)
+    for (const code of codes) {
+      try {
+        const hRes = await adviceApi.getHistory(code, 60)
+        fundHistories.value[code] = hRes.data.records || []
+      } catch { /* ignore */ }
+    }
+
+    await nextTick()
+    drawTrendChart()
+  } catch (e) {
+    console.error('加载建议数据失败', e)
+    ElMessage.error('加载数据失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+const handleGenerate = async () => {
+  generating.value = true
+  try {
+    await adviceApi.generate()
+    ElMessage.success('建议生成完成')
+    await loadData()
+  } catch (e) {
+    ElMessage.error('建议生成失败: ' + (e.response?.data?.detail || e.message))
+  } finally {
+    generating.value = false
+  }
+}
+
+const openDetail = async (code, name) => {
+  detailFundName.value = name
+  try {
+    const { data } = await adviceApi.getFundAdvice(code)
+    detail.value = data
+    detailVisible.value = true
+    await nextTick()
+    drawRadarChart()
+    drawDetailTrend(code)
+  } catch (e) {
+    ElMessage.error('加载详情失败')
+  }
+}
+
+// ============== 趋势图（多基金叠加） ==============
+const drawTrendChart = () => {
+  if (!trendChartRef.value) return
+  const entries = Object.entries(fundHistories.value).filter(([, records]) => records.length > 1)
+  if (!entries.length) return
+
+  if (!trendChart) trendChart = echarts.init(trendChartRef.value)
+
+  // 收集所有日期
+  const allDates = new Set()
+  const seriesData = []
+  entries.forEach(([code, records], idx) => {
+    const rev = [...records].reverse()
+    rev.forEach(r => allDates.add(r.date))
+    seriesData.push({
+      name: code,
+      type: 'line',
+      smooth: true,
+      symbol: 'none',
+      lineStyle: { width: 2, color: FUND_COLORS[idx % FUND_COLORS.length] },
+      data: rev.map(r => r.overall_score ?? null),
+    })
+  })
+
+  const sortedDates = [...allDates].sort()
+
+  // 参考线（顾问操作阈值）
+  const markLines = [
+    { yAxis: 75, label: { formatter: '强烈加仓' } },
+    { yAxis: 60, label: { formatter: '适度加仓' } },
+    { yAxis: 40, label: { formatter: '持有观望' } },
+    { yAxis: 25, label: { formatter: '适度减仓' } },
+  ]
+
+  trendChart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: 'rgba(30, 41, 59, 0.9)',
+      borderColor: 'transparent',
+      textStyle: { color: '#fff' },
+    },
+    legend: {
+      data: seriesData.map(s => s.name),
+      textStyle: { color: 'var(--color-foreground-secondary)', fontSize: 11 },
+      top: 0,
+    },
+    grid: { left: '3%', right: '3%', bottom: '12%', top: '16%', containLabel: true },
+    xAxis: {
+      type: 'category',
+      data: sortedDates,
+      axisLine: { lineStyle: { color: 'var(--color-border)' } },
+      axisLabel: { color: 'var(--color-foreground-muted)', fontSize: 11, rotate: 30 },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: 'value',
+      min: 0,
+      max: 100,
+      axisLine: { show: false },
+      axisLabel: { color: 'var(--color-foreground-muted)', fontSize: 11 },
+      splitLine: { lineStyle: { color: 'var(--color-border)', type: 'dashed' } },
+      // 参考线
+      splitArea: {
+        show: true,
+        areaStyle: {
+          color: [
+            'rgba(22, 163, 74, 0.04)',   // 75-100 加仓区
+            'rgba(22, 163, 74, 0.02)',   // 60-75
+            'rgba(234, 179, 8, 0.02)',   // 40-60 观望区
+            'rgba(220, 38, 38, 0.02)',   // 25-40 减仓区
+            'rgba(220, 38, 38, 0.04)',   // 0-25 止盈区
+          ],
+        },
+      },
+    },
+    dataZoom: [
+      { type: 'inside', start: 0, end: 100 },
+      { type: 'slider', start: 0, end: 100, height: 20, bottom: 5, borderColor: 'var(--color-border)' },
+    ],
+    series: seriesData,
+  })
+}
+
+// ============== 雷达图 ==============
+const drawRadarChart = () => {
+  if (!radarChartRef.value || !detail.value) return
+  if (!radarChart) radarChart = echarts.init(radarChartRef.value)
+
+  const s = detail.value.scores || {}
+  const values = [s.technical, s.valuation, s.fund_flow, s.sentiment].map(v => v ?? 0)
+
+  radarChart.setOption({
+    tooltip: {
+      backgroundColor: 'rgba(30, 41, 59, 0.9)',
+      borderColor: 'transparent',
+      textStyle: { color: '#fff' },
+    },
+    radar: {
+      indicator: [
+        { name: '技术面', max: 100 },
+        { name: '估值面', max: 100 },
+        { name: '资金面', max: 100 },
+        { name: '情绪面', max: 100 },
+      ],
+      shape: 'circle',
+      center: ['50%', '50%'],
+      radius: '65%',
+      axisName: {
+        color: 'var(--color-foreground-secondary)',
+        fontSize: 12,
+      },
+      splitArea: {
+        areaStyle: {
+          color: ['rgba(30, 64, 175, 0.02)', 'rgba(30, 64, 175, 0.06)'],
+        },
+      },
+      splitLine: {
+        lineStyle: { color: 'var(--color-border)' },
+      },
+    },
+    series: [{
+      type: 'radar',
+      data: [{
+        value: values,
+        name: detail.value.fund_code,
+        areaStyle: { color: 'rgba(30, 64, 175, 0.15)' },
+        lineStyle: { color: '#1E40AF', width: 2 },
+        itemStyle: { color: '#1E40AF' },
+      }],
+    }],
+  })
+}
+
+// ============== 单基金历史趋势图 ==============
+const drawDetailTrend = (code) => {
+  if (!detailTrendRef.value) return
+  const records = fundHistories.value[code]
+  if (!records || records.length < 2) return
+
+  if (!detailTrendChart) detailTrendChart = echarts.init(detailTrendRef.value)
+
+  const rev = [...records].reverse()
+  const dates = rev.map(r => r.date)
+
+  detailTrendChart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: 'rgba(30, 41, 59, 0.9)',
+      borderColor: 'transparent',
+      textStyle: { color: '#fff' },
+      formatter: (params) => {
+        const p = params[0]
+        let html = `<div style="font-weight:600">${p.axisValue}</div>`
+        params.forEach(pp => {
+          html += `<div>${pp.marker} ${pp.seriesName}: ${pp.value}</div>`
+        })
+        return html
+      },
+    },
+    legend: {
+      data: ['综合评分', '技术面', '估值面', '资金面', '情绪面'],
+      textStyle: { color: 'var(--color-foreground-secondary)', fontSize: 10 },
+      top: 0,
+    },
+    grid: { left: '3%', right: '3%', bottom: '8%', top: '18%', containLabel: true },
+    xAxis: {
+      type: 'category',
+      data: dates,
+      axisLine: { lineStyle: { color: 'var(--color-border)' } },
+      axisLabel: { color: 'var(--color-foreground-muted)', fontSize: 10, rotate: 30 },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: 'value',
+      min: 0,
+      max: 100,
+      axisLine: { show: false },
+      axisLabel: { color: 'var(--color-foreground-muted)', fontSize: 10 },
+      splitLine: { lineStyle: { color: 'var(--color-border)', type: 'dashed' } },
+    },
+    series: [
+      {
+        name: '综合评分',
+        type: 'line',
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { width: 2, color: '#1E40AF' },
+        data: rev.map(r => r.overall_score ?? null),
+      },
+      {
+        name: '技术面',
+        type: 'line',
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { width: 1, color: '#D97706', type: 'dashed' },
+        data: rev.map(r => r.scores?.technical ?? null),
+      },
+      {
+        name: '估值面',
+        type: 'line',
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { width: 1, color: '#16A34A', type: 'dashed' },
+        data: rev.map(r => r.scores?.valuation ?? null),
+      },
+      {
+        name: '资金面',
+        type: 'line',
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { width: 1, color: '#0284C7', type: 'dashed' },
+        data: rev.map(r => r.scores?.fund_flow ?? null),
+      },
+      {
+        name: '情绪面',
+        type: 'line',
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { width: 1, color: '#7C3AED', type: 'dashed' },
+        data: rev.map(r => r.scores?.sentiment ?? null),
+      },
+    ],
+  })
+}
+
+// ============== 响应式 ==============
+const resizeAll = () => {
+  trendChart?.resize()
+  radarChart?.resize()
+  detailTrendChart?.resize()
+}
+
+onMounted(() => {
+  loadData()
+  window.addEventListener('resize', resizeAll)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', resizeAll)
+  trendChart?.dispose()
+  radarChart?.dispose()
+  detailTrendChart?.dispose()
+})
 </script>
 
 <style scoped>
@@ -200,7 +678,16 @@ onMounted(loadList)
 
 /* === Page Header === */
 .page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   margin-bottom: var(--spacing-lg);
+}
+
+.header-left {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-md);
 }
 
 .page-header h2 {
@@ -210,7 +697,30 @@ onMounted(loadList)
   color: var(--color-foreground);
 }
 
-/* === Warning Alert === */
+.header-subtitle {
+  font-size: var(--font-size-sm);
+  color: var(--color-foreground-muted);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+}
+
+.env-tag {
+  font-size: var(--font-size-sm);
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+}
+
+.btn-icon {
+  width: 16px;
+  height: 16px;
+  margin-right: 6px;
+}
+
+/* === Warning === */
 .warning-alert {
   margin-bottom: var(--spacing-lg);
   border-radius: var(--radius-md);
@@ -221,8 +731,247 @@ onMounted(loadList)
   height: 20px;
 }
 
-/* === Table Card === */
-.table-card {
+/* === Page Body === */
+.page-body {
+  min-height: 200px;
+}
+
+/* === Stats Row === */
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-lg);
+}
+
+.stat-card {
+  display: flex;
+  gap: var(--spacing-md);
+  padding: var(--spacing-lg);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  transition: all var(--transition-fast);
+}
+
+.stat-card:hover {
+  border-color: var(--color-primary-light);
+  box-shadow: var(--shadow-sm);
+}
+
+.stat-icon {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-muted);
+  border-radius: var(--radius-md);
+  color: var(--color-primary);
+}
+
+.stat-icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.stat-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.stat-label {
+  font-size: var(--font-size-xs);
+  color: var(--color-foreground-muted);
+  margin-bottom: 4px;
+}
+
+.stat-value {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-foreground);
+}
+
+.stat-bar {
+  height: 4px;
+  background: var(--color-muted);
+  border-radius: var(--radius-full);
+  margin-top: 6px;
+  overflow: hidden;
+}
+
+.stat-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--color-primary), var(--color-secondary));
+  border-radius: var(--radius-full);
+  transition: width var(--transition-normal);
+}
+
+.stat-signals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.stat-signals .el-tag {
+  border-radius: var(--radius-full);
+}
+
+.stat-na {
+  font-size: var(--font-size-sm);
+  color: var(--color-foreground-muted);
+}
+
+/* === Fund Cards Grid === */
+.fund-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-lg);
+}
+
+.fund-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-lg);
+  transition: all var(--transition-fast);
+}
+
+.fund-card:hover {
+  border-color: var(--color-primary-light);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-2px);
+}
+
+.fund-card.no-advice {
+  opacity: 0.6;
+}
+
+.fund-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-md);
+}
+
+.signal-badge {
+  border-radius: var(--radius-full);
+}
+
+.fund-weight {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--color-foreground-muted);
+  background: var(--color-muted);
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+}
+
+.fund-card-body {
+  flex: 1;
+}
+
+.fund-name {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 2px;
+}
+
+.fund-code {
+  font-size: var(--font-size-xs);
+  color: var(--color-foreground-muted);
+  margin-bottom: var(--spacing-md);
+}
+
+/* Confidence in card */
+.confidence-section {
+  margin-bottom: var(--spacing-md);
+}
+
+.confidence-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--font-size-xs);
+  color: var(--color-foreground-muted);
+  margin-bottom: 4px;
+}
+
+.confidence-bar {
+  height: 6px;
+  background: var(--color-muted);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.confidence-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--color-primary), var(--color-secondary));
+  border-radius: var(--radius-full);
+  transition: width var(--transition-normal);
+}
+
+/* Mini scores grid */
+.scores-mini {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+
+.score-dot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  background: var(--color-muted);
+  border-radius: var(--radius-sm);
+}
+
+.score-dot-label {
+  font-size: var(--font-size-xs);
+  color: var(--color-foreground-muted);
+}
+
+.score-dot-value {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-foreground);
+}
+
+.fund-card-actions {
+  margin-top: var(--spacing-md);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--color-border-light);
+  text-align: center;
+}
+
+.detail-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.btn-icon-sm {
+  width: 14px;
+  height: 14px;
+}
+
+/* === Charts Section === */
+.charts-section {
+  margin-bottom: var(--spacing-lg);
+}
+
+.chart-card {
   margin-bottom: var(--spacing-lg);
 }
 
@@ -245,51 +994,22 @@ onMounted(loadList)
   color: var(--color-primary);
 }
 
-.advice-table .code {
-  color: var(--color-primary);
-  font-weight: var(--font-weight-medium);
-}
-
-.signal-tag {
-  border-radius: var(--radius-full);
-}
-
-.confidence-cell {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-}
-
-.confidence-bar {
-  flex: 1;
-  height: 6px;
+.card-badge {
+  font-size: var(--font-size-xs);
+  padding: 4px 10px;
   background: var(--color-muted);
   border-radius: var(--radius-full);
-  overflow: hidden;
-}
-
-.confidence-fill {
-  height: 100%;
-  background: linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 100%);
-  border-radius: var(--radius-full);
-  transition: width var(--transition-normal);
-}
-
-.confidence-value {
-  flex-shrink: 0;
-  font-size: var(--font-size-sm);
   color: var(--color-foreground-secondary);
 }
 
-.detail-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+.chart-wrapper {
+  background: linear-gradient(180deg, var(--color-surface), var(--color-muted));
+  border-radius: var(--radius-md);
+  padding: var(--spacing-sm);
 }
 
-.btn-icon-sm {
-  width: 14px;
-  height: 14px;
+.chart-container {
+  height: 380px;
 }
 
 /* === Detail Dialog === */
@@ -336,9 +1056,22 @@ onMounted(loadList)
   padding: 4px 12px;
 }
 
-/* === Scores Section === */
-.scores-section {
+/* Radar + Trend side by side */
+.detail-charts-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--spacing-md);
   margin-bottom: var(--spacing-lg);
+}
+
+.detail-chart-half {
+  background: var(--color-muted);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+}
+
+.radar-container {
+  height: 260px;
 }
 
 .section-title {
@@ -351,60 +1084,79 @@ onMounted(loadList)
   color: var(--color-foreground);
 }
 
-.section-icon {
-  width: 18px;
-  height: 18px;
-  color: var(--color-primary);
+/* Dimensions breakdown */
+.dimensions-section {
+  margin-bottom: var(--spacing-lg);
 }
 
-.scores-grid {
+.dimensions-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: var(--spacing-md);
 }
 
-.score-card {
-  text-align: center;
+.dimension-card {
   padding: var(--spacing-md);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  transition: all var(--transition-fast);
 }
 
-.score-card:hover {
-  border-color: var(--color-primary-light);
-  box-shadow: var(--shadow-sm);
+.dim-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-sm);
 }
 
-.score-label {
-  font-size: var(--font-size-sm);
-  color: var(--color-foreground-secondary);
-  margin-bottom: var(--spacing-xs);
-}
-
-.score-value {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-2xl);
-  font-weight: var(--font-weight-bold);
+.dim-name {
+  font-weight: var(--font-weight-semibold);
   color: var(--color-foreground);
 }
 
-/* === Analysis Section === */
-.analysis-section {
-  margin-bottom: var(--spacing-md);
+.dim-conf {
+  margin-left: auto;
+  font-size: var(--font-size-sm);
+  color: var(--color-foreground-secondary);
 }
 
-.analysis-content {
-  padding: var(--spacing-md);
-  background: var(--color-muted);
-  border-radius: var(--radius-md);
+.dim-reasons p {
+  margin: 4px 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-foreground-secondary);
+  line-height: var(--line-height-relaxed);
+  padding-left: var(--spacing-sm);
+  border-left: 2px solid var(--color-border);
+}
+
+.dim-na {
+  font-style: italic;
+  color: var(--color-foreground-muted);
+}
+
+/* Signal coloring for dimension cards */
+.dimension-card.success { border-left-color: var(--color-success); }
+.dimension-card.danger { border-left-color: var(--color-destructive); }
+.dimension-card.warning { border-left-color: var(--color-accent); }
+
+.dim-reasons p {
+  border-left-color: var(--color-border);
+}
+
+/* Collapse */
+.advice-collapse {
+  margin-top: var(--spacing-md);
+}
+
+.advice-raw {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   white-space: pre-wrap;
-  font-size: var(--font-size-sm);
   line-height: var(--line-height-relaxed);
   color: var(--color-foreground-secondary);
   max-height: 300px;
   overflow-y: auto;
+  margin: 0;
 }
 
 /* === Mono === */
@@ -413,13 +1165,35 @@ onMounted(loadList)
 }
 
 /* === Responsive === */
+@media (max-width: 1024px) {
+  .fund-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .detail-charts-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 768px) {
+  .stats-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .fund-grid {
+    grid-template-columns: 1fr;
+  }
+
   .detail-meta {
     grid-template-columns: repeat(2, 1fr);
   }
 
-  .scores-grid {
-    grid-template-columns: repeat(2, 1fr);
+  .dimensions-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-charts-row {
+    grid-template-columns: 1fr;
   }
 }
 </style>

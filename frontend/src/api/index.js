@@ -29,7 +29,11 @@ export const fundApi = {
 // 建议相关
 export const adviceApi = {
   getList: () => api.get('/advice/'),
-  getFundAdvice: (code) => api.get(`/advice/${code}`)
+  getFundAdvice: (code) => api.get(`/advice/${code}`),
+  getPortfolio: () => api.get('/advice/portfolio'),
+  getHistory: (code, limit = 30) => api.get(`/advice/history/${code}`, { params: { limit } }),
+  getCompare: () => api.get('/advice/compare'),
+  generate: () => api.post('/advice/generate')
 }
 
 // 任务相关

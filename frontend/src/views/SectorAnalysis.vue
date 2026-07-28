@@ -12,7 +12,7 @@
       </div>
     </div>
 
-    <!-- 北向资金走势 -->
+    <!-- 资金流向趋势 -->
     <el-row :gutter="20" style="margin-bottom: 20px;">
       <el-col :span="16">
         <el-card class="chart-card">
@@ -23,7 +23,7 @@
                   <path d="M10 17l5-5-5-5"/>
                   <path d="M3 12h12"/>
                 </svg>
-                北向资金流向趋势
+                主力资金流向趋势
               </div>
               <span class="card-badge">近30日</span>
             </div>
@@ -173,13 +173,13 @@ let flowChart = null
 const last5DaysSum = computed(() => {
   const data = flows.value.slice(-5)
   if (!data.length) return 0
-  return data.reduce((sum, f) => sum + (f.north_flow || 0), 0)
+  return data.reduce((sum, f) => sum + (f.main_flow || 0), 0)
 })
 
 const last30DaysSum = computed(() => {
   const data = flows.value
   if (!data.length) return 0
-  return data.reduce((sum, f) => sum + (f.north_flow || 0), 0)
+  return data.reduce((sum, f) => sum + (f.main_flow || 0), 0)
 })
 
 const flowClass = (val) => {
@@ -218,8 +218,14 @@ const topGainers = computed(() => {
 })
 
 const topLosers = computed(() => {
-  const list = [...sectors.value].sort((a, b) => (a.change_pct || 0) - (b.change_pct || 0))
-  return list.slice(0, 10)
+  // 首先尝试找真实下跌的板块
+  const losers = [...sectors.value].filter(s => (s.change_pct || 0) < 0).sort((a, b) => (a.change_pct || 0) - (b.change_pct || 0))
+  if (losers.length > 0) {
+    return losers.slice(0, 10)
+  }
+  // 如果没有下跌的，就显示涨幅最小的板块
+  const all = [...sectors.value].filter(s => (s.change_pct || 0) !== 0).sort((a, b) => (a.change_pct || 0) - (b.change_pct || 0))
+  return all.slice(0, 10)
 })
 
 // ============== 数据加载 ==============
@@ -307,7 +313,7 @@ const drawFlowChart = () => {
       formatter: (params) => {
         const d = params[0]
         const val = d.value >= 0 ? `+${d.value}` : d.value
-        return `<div style="font-weight:600">${d.axisValue}</div><div>北向资金: ${val} 亿</div>`
+        return `<div style="font-weight:600">${d.axisValue}</div><div>主力资金: ${val} 亿</div>`
       }
     },
     grid: { left: '3%', right: '3%', bottom: '12%', top: '5%', containLabel: true },
@@ -331,9 +337,9 @@ const drawFlowChart = () => {
       { type: 'slider', start: 50, end: 100, height: 20, bottom: 5 }
     ],
     series: [{
-      name: '北向资金(亿)',
+      name: '主力资金(亿)',
       type: 'bar',
-      data: list.map(f => (f.north_flow / 1e8).toFixed(2)),
+      data: list.map(f => (f.main_flow / 1e8).toFixed(2)),
       barWidth: '60%',
       itemStyle: {
         borderRadius: [4, 4, 0, 0],
