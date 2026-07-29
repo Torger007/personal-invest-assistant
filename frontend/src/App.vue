@@ -113,7 +113,13 @@
               </svg>
             </div>
             <div class="message-content">
-              {{ msg.content }}
+              <div v-if="msg.progress?.length" class="drawer-tool-progress">
+                <div v-for="(step, stepIndex) in msg.progress" :key="`${step.name}-${stepIndex}`" class="drawer-tool-step">
+                  <span :class="['progress-dot', step.status]"></span>
+                  <span>{{ toolLabel(step.name) }}</span>
+                </div>
+              </div>
+              <span v-if="msg.content">{{ msg.content }}</span>
             </div>
           </div>
           <div v-if="asking" class="message assistant">
@@ -203,22 +209,56 @@ const sendQuestion = async () => {
 
   const userQuestion = question.value.trim()
   messages.value.push({ role: 'user', content: userQuestion })
+  const assistantMessage = { role: 'assistant', content: '', progress: [] }
+  messages.value.push(assistantMessage)
   question.value = ''
   asking.value = true
 
   scrollToBottom()
 
   try {
-    const { data } = await agentApi.chat(userQuestion)
-    messages.value.push({ role: 'assistant', content: data.answer })
+    await agentApi.chatStream(userQuestion, event => {
+      if (event.type === 'tool_started') {
+        assistantMessage.progress.push({ name: event.name, status: 'running' })
+      } else if (event.type === 'tool_completed') {
+        const step = [...assistantMessage.progress].reverse().find(item => item.name === event.name && item.status === 'running')
+        if (step) step.status = event.status
+      } else if (event.type === 'summarizing') {
+        assistantMessage.progress.push({ name: 'summarizing', status: 'running' })
+      } else if (event.type === 'token') {
+        assistantMessage.content += event.content
+      } else if (event.type === 'complete') {
+        assistantMessage.content = event.answer || assistantMessage.content
+        const step = assistantMessage.progress.find(item => item.name === 'summarizing' && item.status === 'running')
+        if (step) step.status = 'success'
+      } else if (event.type === 'error') {
+        assistantMessage.content = `抱歉，问答失败了：${event.message}`
+      }
+      scrollToBottom()
+    })
   } catch (e) {
-    ElMessage.error('问答失败: ' + (e.response?.data?.detail || e.message))
-    messages.value.push({ role: 'assistant', content: '抱歉，问答失败了，请稍后重试。' })
+    ElMessage.error('问答失败: ' + e.message)
+    assistantMessage.content = '抱歉，问答失败了，请稍后重试。'
   } finally {
     asking.value = false
     scrollToBottom()
   }
 }
+
+const toolLabel = (name) => ({
+  get_portfolio: '正在读取当前持仓',
+  get_market_overview: '正在读取市场概览',
+  get_sector_trend: '正在分析板块趋势',
+  get_latest_advice: '正在读取系统建议',
+  generate_advice: '正在生成系统建议',
+  compare_funds: '正在比较基金',
+  get_fund_info: '正在读取基金信息',
+  get_fund_nav: '正在获取基金净值',
+  analyze_technical: '正在分析技术面',
+  get_fund_flow: '正在读取资金流',
+  get_analysis_history: '正在读取历史判断',
+  summarizing: '正在生成结论'
+}[name] || name)
 
 const clearMessages = () => {
   messages.value = []
@@ -471,6 +511,31 @@ const handleDrawerClose = (done) => {
   color: var(--color-foreground-muted);
   font-style: italic;
 }
+
+.drawer-tool-progress {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+  color: var(--color-foreground-muted);
+  font-size: var(--font-size-sm);
+}
+
+.drawer-tool-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.progress-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-border);
+}
+
+.progress-dot.running { background: var(--color-primary); }
+.progress-dot.success { background: #16a34a; }
+.progress-dot.error { background: #dc2626; }
 
 /* === Chat Input === */
 .chat-input-area {

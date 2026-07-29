@@ -1,6 +1,6 @@
 """LLM Provider 基础接口定义"""
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional
+from typing import AsyncIterator, List, Dict, Any, Optional
 from dataclasses import dataclass
 
 
@@ -46,6 +46,17 @@ class BaseLLMProvider(ABC):
         Returns:
             LLMResponse: LLM 响应对象
         """
+        pass
+
+    @abstractmethod
+    async def stream_chat(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict]] = None,
+        max_tokens: int = 4000,
+        system_prompt: Optional[str] = None,
+    ) -> AsyncIterator[str]:
+        """Stream text-only assistant output for a prepared conversation."""
         pass
 
     @abstractmethod

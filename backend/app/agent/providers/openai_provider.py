@@ -1,6 +1,6 @@
 """OpenAI GPT API Provider 实现"""
 import json
-from typing import Any, List, Dict, Optional
+from typing import AsyncIterator, Any, List, Dict, Optional
 from openai import AsyncOpenAI
 from app.agent.providers.base import BaseLLMProvider, LLMResponse, ToolCall
 
@@ -77,6 +77,27 @@ class OpenAIProvider(BaseLLMProvider):
 
     def get_provider_name(self) -> str:
         return "openai"
+
+    async def stream_chat(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict]] = None,
+        max_tokens: int = 4000,
+        system_prompt: Optional[str] = None,
+    ) -> AsyncIterator[str]:
+        request_messages = self._convert_messages(messages)
+        if system_prompt:
+            request_messages = [{"role": "system", "content": system_prompt}, *request_messages]
+
+        stream = await self.client.chat.completions.create(
+            model=self.model,
+            messages=request_messages,
+            max_tokens=max_tokens,
+            stream=True,
+        )
+        async for chunk in stream:
+            if chunk.choices and (content := chunk.choices[0].delta.content):
+                yield content
 
     def _convert_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Convert normalized agent messages to OpenAI chat messages."""

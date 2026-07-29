@@ -1,5 +1,5 @@
 """Anthropic Claude API Provider 实现"""
-from typing import Any, List, Dict, Optional
+from typing import AsyncIterator, Any, List, Dict, Optional
 from anthropic import AsyncAnthropic
 from app.agent.providers.base import BaseLLMProvider, LLMResponse, ToolCall
 
@@ -68,6 +68,23 @@ class AnthropicProvider(BaseLLMProvider):
 
     def get_provider_name(self) -> str:
         return "anthropic"
+
+    async def stream_chat(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict]] = None,
+        max_tokens: int = 4000,
+        system_prompt: Optional[str] = None,
+    ) -> AsyncIterator[str]:
+        async with self.client.messages.stream(
+            model=self.model,
+            max_tokens=max_tokens,
+            messages=self._convert_messages(messages),
+            system=system_prompt or None,
+            tools=None,
+        ) as stream:
+            async for text in stream.text_stream:
+                yield text
 
     def _convert_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Convert normalized agent messages to Anthropic Messages API format."""

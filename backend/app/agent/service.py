@@ -5,6 +5,7 @@ Agent Service
 """
 import time
 import logging
+from typing import Any, AsyncIterator
 from sqlalchemy import select
 
 from app.agent.core import AgentCore
@@ -21,7 +22,6 @@ class AgentService:
     """Agent 服务"""
 
     def __init__(self):
-        self.core = AgentCore()
         self.planner = AgentPlanner()
 
     async def analyze_portfolio(self) -> str:
@@ -30,39 +30,12 @@ class AgentService:
         Returns:
             str: 分析报告
         """
-        start_time = time.time()
-
-        # 构建分析提示
-        portfolio = get_portfolio_info()
-        portfolio_str = "\n".join([
-            f"- {fund['code']} ({fund['name']}): 权重 {fund['weight']*100:.0f}%"
-            for fund in portfolio
-        ])
-
-        prompt = render_agent_prompt(
-            "autonomous_portfolio_analysis",
-            portfolio=portfolio_str,
-        )
-        system_prompt = get_agent_system_prompt()
-
-        self.core.reset()
-        result = await self.core.run_planned(
-            prompt,
-            plan=self.planner.plan_portfolio_analysis(),
-            system_prompt=system_prompt,
-            trace_question="组合自主分析",
-        )
-
-        duration = int(time.time() - start_time)
-
-        await self._save_analysis(
-            analysis_type="autonomous",
-            execution_record=self.core.get_execution_trace(),
-            summary=result,
-            duration_seconds=duration
-        )
-
-        return result
+        async for event in self.stream_portfolio_analysis():
+            if event["type"] == "complete":
+                return event["answer"]
+            if event["type"] == "error":
+                raise RuntimeError(event["message"])
+        raise RuntimeError("组合分析未生成结果")
 
     async def ask_question(self, question: str) -> str:
         """问答交互模式：回答用户投资问题。
@@ -73,37 +46,77 @@ class AgentService:
         Returns:
             str: Agent 回答
         """
-        start_time = time.time()
+        async for event in self.stream_question(question):
+            if event["type"] == "complete":
+                return event["answer"]
+            if event["type"] == "error":
+                raise RuntimeError(event["message"])
+        raise RuntimeError("问答未生成结果")
 
+    async def stream_question(self, question: str) -> AsyncIterator[dict[str, Any]]:
+        """Stream a question's tool progress and generated answer."""
         portfolio_codes = get_portfolio_codes()
-        context_prompt = render_agent_prompt(
+        prompt = render_agent_prompt(
             "interactive_question",
             portfolio_codes=", ".join(portfolio_codes),
             question=question,
         )
-        system_prompt = get_agent_system_prompt()
-
-        self.core.reset()
-        result = await self.core.run_planned(
-            context_prompt,
-            plan=self.planner.plan_question(question),
-            system_prompt=system_prompt,
-            trace_question=question,
-        )
-
-        duration = int(time.time() - start_time)
-
-        await self._save_analysis(
+        async for event in self._stream_and_save(
             analysis_type="interactive",
-            execution_record=self.core.get_execution_trace(),
-            summary=result,
-            duration_seconds=duration
-        )
+            prompt=prompt,
+            plan=self.planner.plan_question(question),
+            trace_question=question,
+        ):
+            yield event
 
-        return result
+    async def stream_portfolio_analysis(self) -> AsyncIterator[dict[str, Any]]:
+        """Stream the autonomous portfolio analysis for a background task."""
+        portfolio = get_portfolio_info()
+        portfolio_str = "\n".join(
+            f"- {fund['code']} ({fund['name']}): 权重 {fund['weight'] * 100:.0f}%"
+            for fund in portfolio
+        )
+        prompt = render_agent_prompt("autonomous_portfolio_analysis", portfolio=portfolio_str)
+        async for event in self._stream_and_save(
+            analysis_type="autonomous",
+            prompt=prompt,
+            plan=self.planner.plan_portfolio_analysis(),
+            trace_question="组合自主分析",
+        ):
+            yield event
+
+    async def _stream_and_save(
+        self,
+        analysis_type: str,
+        prompt: str,
+        plan,
+        trace_question: str,
+    ) -> AsyncIterator[dict[str, Any]]:
+        core = AgentCore()
+        start_time = time.time()
+        try:
+            async for event in core.stream_planned(
+                prompt,
+                plan=plan,
+                system_prompt=get_agent_system_prompt(),
+                trace_question=trace_question,
+            ):
+                if event["type"] == "complete":
+                    await self._save_analysis(
+                        core=core,
+                        analysis_type=analysis_type,
+                        execution_record=core.get_execution_trace(),
+                        summary=event["answer"],
+                        duration_seconds=int(time.time() - start_time),
+                    )
+                yield event
+        except Exception as e:
+            logger.exception("[Agent] 流式执行失败")
+            yield {"type": "error", "message": str(e)}
 
     async def _save_analysis(
         self,
+        core: AgentCore,
         analysis_type: str,
         execution_record: dict,
         summary: str,
@@ -111,7 +124,7 @@ class AgentService:
     ):
         """保存分析历史到数据库"""
         try:
-            provider_info = self.core.get_provider_info()
+            provider_info = core.get_provider_info()
             async with AsyncSessionLocal() as session:
                 analysis = AgentAnalysis(
                     analysis_type=analysis_type,

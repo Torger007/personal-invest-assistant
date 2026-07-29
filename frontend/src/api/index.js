@@ -45,8 +45,42 @@ export const taskApi = {
 // Agent 相关
 export const agentApi = {
   triggerAnalysis: () => api.post('/agent/analyze'),
-  chat: (question) => api.post('/agent/chat', { question }),
-  getHistory: (limit = 10) => api.get('/agent/history', { params: { limit } })
+  getAnalysisTask: (taskId) => api.get(`/agent/analyze/${taskId}`),
+  getHistory: (limit = 10) => api.get('/agent/history', { params: { limit } }),
+  chatStream: (question, onEvent) => readSseResponse('/api/agent/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question })
+  }, onEvent),
+  subscribeAnalysis: (taskId, onEvent) => subscribeSse(`/api/agent/analyze/${taskId}/events`, onEvent)
+}
+
+async function readSseResponse(url, options, onEvent) {
+  const response = await fetch(url, options)
+  if (!response.ok || !response.body) {
+    throw new Error(`请求失败 (${response.status})`)
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  while (true) {
+    const { value, done } = await reader.read()
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
+    const frames = buffer.split('\n\n')
+    buffer = frames.pop() || ''
+    frames.forEach(frame => {
+      const dataLine = frame.split('\n').find(line => line.startsWith('data: '))
+      if (dataLine) onEvent(JSON.parse(dataLine.slice(6)))
+    })
+    if (done) break
+  }
+}
+
+function subscribeSse(url, onEvent) {
+  const source = new EventSource(url)
+  source.onmessage = event => onEvent(JSON.parse(event.data), source)
+  return source
 }
 
 export default api

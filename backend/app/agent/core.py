@@ -8,7 +8,7 @@ import json
 import logging
 import time
 from copy import deepcopy
-from typing import Any, List, Dict
+from typing import Any, AsyncIterator, List, Dict
 
 from app.agent.providers import create_provider, LLMResponse
 from app.agent.planner import ToolPlan
@@ -145,6 +145,54 @@ class AgentCore:
             **self.get_provider_info(),
         })
         return content
+
+    async def stream_planned(
+        self,
+        user_input: str,
+        plan: ToolPlan,
+        system_prompt: str | None = None,
+        trace_question: str | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Run a plan and yield tool progress plus LLM text chunks."""
+        self.conversation.append({"role": "user", "content": user_input})
+        self.conversation.append({"role": "planner", "plan": plan.to_dict()})
+        self.execution_trace = {
+            "question": trace_question or user_input,
+            "intent": plan.intent,
+            "tools": [],
+        }
+        yield {"type": "plan", "intent": plan.intent, "tools": [step.tool_name for step in plan.steps]}
+
+        results: list[dict[str, Any]] = []
+        result_by_tool: dict[str, dict[str, Any]] = {}
+        for step in plan.steps:
+            arguments = self._resolve_arguments(step.arguments, result_by_tool)
+            yield {"type": "tool_started", "name": step.tool_name, "args": self._json_safe(step.arguments)}
+            tool_start = time.perf_counter()
+            result = await self.tools.execute(step.tool_name, arguments)
+            duration_ms = round((time.perf_counter() - tool_start) * 1000)
+            result_by_tool[step.tool_name] = result
+            tool_result = {"tool_name": step.tool_name, "arguments": arguments, "result": result}
+            results.append(tool_result)
+            self.conversation.append({"role": "tool_result", **tool_result})
+            trace = self._build_tool_trace(step.tool_name, step.arguments, result, duration_ms)
+            self.execution_trace["tools"].append(trace)
+            yield {"type": "tool_completed", **trace}
+
+        yield {"type": "summarizing"}
+        answer_parts: list[str] = []
+        async for text in self.llm.stream_chat(
+            messages=[{"role": "user", "content": self._build_summary_input(user_input, plan, results)}],
+            tools=None,
+            system_prompt=system_prompt,
+        ):
+            answer_parts.append(text)
+            yield {"type": "token", "content": text}
+
+        content = "".join(answer_parts) or "分析完成，但未生成有效回答。"
+        self.conversation.append({"role": "assistant", "content": content})
+        self.execution_trace.update({"final_answer": content, **self.get_provider_info()})
+        yield {"type": "complete", "answer": content}
 
     @staticmethod
     def _build_tool_trace(

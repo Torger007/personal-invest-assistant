@@ -32,8 +32,10 @@
       </div>
       <div v-if="answer" class="chat-answer">
         <el-divider />
+        <ToolProgress v-if="asking || questionProgress.length" :items="questionProgress" />
         <pre class="answer-text">{{ answer }}</pre>
       </div>
+      <ToolProgress v-else-if="asking" :items="questionProgress" />
     </el-card>
 
     <!-- 自主分析 -->
@@ -59,8 +61,10 @@
       </el-button>
       <div v-if="lastResult" class="analysis-result">
         <el-divider />
+        <ToolProgress v-if="analysisProgress.length" :items="analysisProgress" />
         <pre class="answer-text">{{ lastResult }}</pre>
       </div>
+      <ToolProgress v-else-if="analyzing" :items="analysisProgress" />
     </el-card>
 
     <!-- 分析历史 -->
@@ -101,17 +105,19 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { defineComponent, h, ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { agentApi } from '../api'
 
 const question = ref('')
 const asking = ref(false)
 const answer = ref('')
+const questionProgress = ref([])
 
 const autoEnabled = ref(false)
 const analyzing = ref(false)
 const lastResult = ref('')
+const analysisProgress = ref([])
 
 const history = ref([])
 const loadingHistory = ref(false)
@@ -122,11 +128,13 @@ const sendQuestion = async () => {
   if (!question.value.trim()) return
   asking.value = true
   answer.value = ''
+  questionProgress.value = []
   try {
-    const { data } = await agentApi.chat(question.value.trim())
-    answer.value = data.answer
+    await agentApi.chatStream(question.value.trim(), event => {
+      applyAgentEvent(event, answer, questionProgress)
+    })
   } catch (e) {
-    ElMessage.error('问答失败: ' + (e.response?.data?.detail || e.message))
+    ElMessage.error('问答失败: ' + e.message)
   } finally {
     asking.value = false
   }
@@ -139,17 +147,80 @@ const toggleAutoMode = async () => {
 const triggerAnalysis = async () => {
   analyzing.value = true
   lastResult.value = ''
+  analysisProgress.value = []
   try {
     const { data } = await agentApi.triggerAnalysis()
-    lastResult.value = data.result
-    ElMessage.success('分析完成')
+    await new Promise((resolve, reject) => {
+      const source = agentApi.subscribeAnalysis(data.task_id, (event, currentSource) => {
+        applyAgentEvent(event, lastResult, analysisProgress)
+        if (event.type === 'complete') {
+          currentSource.close()
+          ElMessage.success('分析完成')
+          resolve()
+        }
+        if (event.type === 'error') {
+          currentSource.close()
+          reject(new Error(event.message))
+        }
+      })
+      source.onerror = () => {
+        source.close()
+        reject(new Error('任务进度连接中断'))
+      }
+    })
     await loadHistory()
   } catch (e) {
-    ElMessage.error('分析失败: ' + (e.response?.data?.detail || e.message))
+    ElMessage.error('分析失败: ' + e.message)
   } finally {
     analyzing.value = false
   }
 }
+
+const toolLabels = {
+  get_portfolio: '正在读取当前持仓',
+  get_market_overview: '正在读取市场概览',
+  get_sector_trend: '正在分析板块趋势',
+  get_latest_advice: '正在读取系统建议',
+  generate_advice: '正在生成系统建议',
+  compare_funds: '正在比较基金',
+  get_fund_info: '正在读取基金信息',
+  get_fund_nav: '正在获取基金净值',
+  analyze_technical: '正在分析技术面',
+  get_fund_flow: '正在读取资金流',
+  get_analysis_history: '正在读取历史判断'
+}
+
+const applyAgentEvent = (event, result, progress) => {
+  if (event.type === 'tool_started') {
+    progress.value.push({ name: event.name, status: 'running' })
+  } else if (event.type === 'tool_completed') {
+    const item = [...progress.value].reverse().find(step => step.name === event.name && step.status === 'running')
+    if (item) Object.assign(item, { status: event.status, duration: event.duration_ms, count: event.data_count })
+  } else if (event.type === 'summarizing') {
+    progress.value.push({ name: 'summarizing', status: 'running' })
+  } else if (event.type === 'token') {
+    result.value += event.content
+  } else if (event.type === 'complete') {
+    result.value = event.answer || result.value
+    const item = progress.value.find(step => step.name === 'summarizing' && step.status === 'running')
+    if (item) item.status = 'success'
+  } else if (event.type === 'error') {
+    progress.value.push({ name: 'error', status: 'error', message: event.message })
+  }
+}
+
+const ToolProgress = defineComponent({
+  props: { items: { type: Array, default: () => [] } },
+  setup(props) {
+    return () => h('div', { class: 'tool-progress' }, props.items.map(item => h('div', {
+      class: ['tool-step', item.status]
+    }, [
+      h('span', { class: 'tool-step-state' }, item.status === 'running' ? '...' : item.status === 'success' ? '✓' : '!'),
+      h('span', { class: 'tool-step-label' }, item.name === 'summarizing' ? '正在生成结论' : item.name === 'error' ? item.message : toolLabels[item.name] || item.name),
+      item.duration !== undefined ? h('span', { class: 'tool-step-meta' }, `${item.duration} ms${item.count != null ? ` · ${item.count} 条` : ''}`) : null
+    ])))
+  }
+})
 
 const loadHistory = async () => {
   loadingHistory.value = true
@@ -203,6 +274,36 @@ onMounted(loadHistory)
 
 .analysis-result {
   margin-top: 8px;
+}
+
+.tool-progress {
+  margin: 12px 0;
+  border-left: 2px solid #dcdfe6;
+  padding-left: 12px;
+}
+
+.tool-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  color: #606266;
+  font-size: 13px;
+}
+
+.tool-step-state {
+  width: 16px;
+  color: #909399;
+  text-align: center;
+}
+
+.tool-step.running .tool-step-state { color: #409eff; }
+.tool-step.success .tool-step-state { color: #67c23a; }
+.tool-step.error .tool-step-state { color: #f56c6c; }
+
+.tool-step-meta {
+  color: #909399;
+  font-size: 12px;
 }
 
 .analysis-content {

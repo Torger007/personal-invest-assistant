@@ -25,6 +25,11 @@ class FakeLLM:
         self.calls.append(kwargs)
         return LLMResponse(content="summary")
 
+    async def stream_chat(self, **kwargs):
+        self.calls.append(kwargs)
+        yield "sum"
+        yield "mary"
+
     def get_provider_name(self):
         return "fake"
 
@@ -82,3 +87,27 @@ async def test_planned_run_executes_references_and_hides_tools_from_llm():
         "provider": "fake",
         "model": "fake-model",
     }
+
+
+async def test_stream_planned_emits_tool_progress_and_tokens():
+    core = AgentCore.__new__(AgentCore)
+    core.llm = FakeLLM()
+    core.tools = FakeTools()
+    core.conversation = []
+    core.execution_trace = {}
+    plan = ToolPlan("market", [PlanStep("get_market_overview")])
+
+    events = [event async for event in core.stream_planned("市场怎么样？", plan)]
+
+    assert [event["type"] for event in events] == [
+        "plan",
+        "tool_started",
+        "tool_completed",
+        "summarizing",
+        "token",
+        "token",
+        "complete",
+    ]
+    assert "".join(event["content"] for event in events if event["type"] == "token") == "summary"
+    assert events[-1]["answer"] == "summary"
+    assert core.llm.calls[0]["tools"] is None
