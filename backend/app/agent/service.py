@@ -8,6 +8,7 @@ import logging
 from sqlalchemy import select
 
 from app.agent.core import AgentCore
+from app.agent.planner import AgentPlanner
 from app.agent.prompt_loader import get_agent_system_prompt, render_agent_prompt
 from app.portfolio import get_portfolio_codes, get_portfolio_info
 from app.models.agent import AgentAnalysis
@@ -21,6 +22,7 @@ class AgentService:
 
     def __init__(self):
         self.core = AgentCore()
+        self.planner = AgentPlanner()
 
     async def analyze_portfolio(self) -> str:
         """自主分析模式：分析用户持仓基金，生成投资建议。
@@ -44,7 +46,11 @@ class AgentService:
         system_prompt = get_agent_system_prompt()
 
         self.core.reset()
-        result = await self.core.run(prompt, system_prompt=system_prompt)
+        result = await self.core.run_planned(
+            prompt,
+            plan=self.planner.plan_portfolio_analysis(),
+            system_prompt=system_prompt,
+        )
 
         duration = int(time.time() - start_time)
 
@@ -77,7 +83,11 @@ class AgentService:
         system_prompt = get_agent_system_prompt()
 
         self.core.reset()
-        result = await self.core.run(context_prompt, system_prompt=system_prompt)
+        result = await self.core.run_planned(
+            context_prompt,
+            plan=self.planner.plan_question(question),
+            system_prompt=system_prompt,
+        )
 
         duration = int(time.time() - start_time)
 

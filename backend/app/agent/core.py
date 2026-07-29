@@ -9,6 +9,7 @@ import logging
 from typing import Any, List, Dict
 
 from app.agent.providers import create_provider, LLMResponse
+from app.agent.planner import ToolPlan
 from app.agent.tools import tool_registry
 
 logger = logging.getLogger(__name__)
@@ -95,6 +96,65 @@ class AgentCore:
 
         logger.warning(f"[Agent] 达到最大迭代次数 {MAX_ITERATIONS}，强制退出")
         return "分析过程涉及过多步骤，已截断。请尝试缩小问题范围。"
+
+    async def run_planned(
+        self,
+        user_input: str,
+        plan: ToolPlan,
+        system_prompt: str | None = None,
+    ) -> str:
+        """Execute a deterministic plan, then ask the LLM to summarize facts only."""
+        self.conversation.append({"role": "user", "content": user_input})
+        self.conversation.append({"role": "planner", "plan": plan.to_dict()})
+
+        results: list[dict[str, Any]] = []
+        result_by_tool: dict[str, dict[str, Any]] = {}
+        for step in plan.steps:
+            arguments = self._resolve_arguments(step.arguments, result_by_tool)
+            logger.info("[Agent] planned tool: %s args: %s", step.tool_name, arguments)
+            result = await self.tools.execute(step.tool_name, arguments)
+            result_by_tool[step.tool_name] = result
+            tool_result = {"tool_name": step.tool_name, "arguments": arguments, "result": result}
+            results.append(tool_result)
+            self.conversation.append({"role": "tool_result", **tool_result})
+
+        response: LLMResponse = await self.llm.chat(
+            messages=[{"role": "user", "content": self._build_summary_input(user_input, plan, results)}],
+            tools=None,
+            system_prompt=system_prompt,
+        )
+        content = response.content or "分析完成，但未生成有效回答。"
+        self.conversation.append({"role": "assistant", "content": content})
+        return content
+
+    @staticmethod
+    def _resolve_arguments(
+        arguments: dict[str, Any], results: dict[str, dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Resolve {\"$ref\": \"tool_name.path\"} values from prior tool results."""
+        def resolve(value: Any) -> Any:
+            if isinstance(value, dict):
+                if set(value) == {"$ref"}:
+                    tool_name, _, path = str(value["$ref"]).partition(".")
+                    resolved: Any = results.get(tool_name)
+                    for key in path.split(".") if path else []:
+                        resolved = resolved.get(key) if isinstance(resolved, dict) else None
+                    return resolved
+                return {key: resolve(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [resolve(item) for item in value]
+            return value
+
+        return {key: resolve(value) for key, value in arguments.items()}
+
+    @staticmethod
+    def _build_summary_input(user_input: str, plan: ToolPlan, results: list[dict[str, Any]]) -> str:
+        payload = {"intent": plan.intent, "fund_codes": plan.fund_codes, "tool_results": results}
+        return (
+            f"用户问题：\n{user_input}\n\n"
+            "以下数据已由确定性计划获取。只基于这些数据综合回答，不要调用工具、不要编造缺失信息。\n"
+            f"{json.dumps(payload, ensure_ascii=False, default=str)}"
+        )
 
     def reset(self):
         """重置对话历史"""
