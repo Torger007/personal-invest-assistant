@@ -73,35 +73,72 @@
     <!-- AI 助手侧边栏 -->
     <el-drawer
       v-model="drawerVisible"
-      title="AI 投资助手"
       direction="rtl"
       size="480px"
       :before-close="handleDrawerClose"
       class="ai-drawer"
+      :with-header="false"
     >
-      <template #header>
-        <div class="drawer-header">
-          <div class="drawer-title">
-            <svg class="drawer-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 2a10 10 0 1 0 10 10H12V2z"/>
-              <path d="M12 2a10 10 0 0 1 10 10"/>
-              <circle cx="12" cy="12" r="4"/>
-            </svg>
-            <span>AI 投资助手</span>
+      <!-- 自定义 Header -->
+      <div class="ai-header">
+        <div class="ai-header-bg"></div>
+        <div class="ai-header-content">
+          <div class="ai-header-left">
+            <div class="ai-logo">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2a10 10 0 1 0 10 10H12V2z"/>
+                <path d="M12 2a10 10 0 0 1 10 10"/>
+                <circle cx="12" cy="12" r="4"/>
+              </svg>
+            </div>
+            <div class="ai-header-title">
+              <h3>AI 投资助手</h3>
+            </div>
           </div>
+          <button class="ai-close-btn" @click="drawerVisible = false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 6L6 18M6 6l12 12"/>
+            </svg>
+          </button>
         </div>
-      </template>
+      </div>
 
       <div class="ai-container">
-        <el-alert
-          title="AI 分析仅供参考，不构成投资建议。投资有风险，入市需谨慎。"
-          type="warning"
-          :closable="false"
-          class="ai-warning"
-        />
-
         <!-- 对话历史 -->
         <div class="chat-container" ref="chatContainer">
+          <!-- 欢迎引导（无消息时显示） -->
+          <div v-if="messages.length === 0 && !asking" class="welcome-section">
+            <div class="welcome-card">
+              <div class="welcome-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 2a10 10 0 1 0 10 10H12V2z"/>
+                  <path d="M12 2a10 10 0 0 1 10 10"/>
+                  <circle cx="12" cy="12" r="4"/>
+                </svg>
+              </div>
+              <h4 class="welcome-title">你好，我是个人投资助手</h4>
+              <p class="welcome-desc">我可以帮你分析基金、解读市场、提供投资建议</p>
+            </div>
+            <div class="quick-questions">
+              <p class="quick-label">试试这些：</p>
+              <div class="quick-btns">
+                <button class="quick-btn" @click="askQuick('005827 现在能买吗？')">
+                  <span class="quick-icon">📈</span>
+                  <span>005827 现在能买吗？</span>
+                </button>
+                <button class="quick-btn" @click="askQuick('帮我分析当前持仓')">
+                  <span class="quick-icon">💼</span>
+                  <span>帮我分析当前持仓</span>
+                </button>
+                <button class="quick-btn" @click="askQuick('今天大盘走势如何？')">
+                  <span class="quick-icon">📊</span>
+                  <span>今天大盘走势如何？</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 消息列表 -->
           <div v-for="(msg, idx) in messages" :key="idx" :class="['message', msg.role]">
             <div class="message-avatar">
               <svg v-if="msg.role === 'user'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -110,47 +147,69 @@
               </svg>
               <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M12 2a10 10 0 1 0 10 10H12V2z"/>
+                <circle cx="12" cy="12" r="4"/>
               </svg>
             </div>
-            <div class="message-content">
-              <div v-if="msg.progress?.length" class="drawer-tool-progress">
-                <div v-for="(step, stepIndex) in msg.progress" :key="`${step.name}-${stepIndex}`" class="drawer-tool-step">
-                  <span :class="['progress-dot', step.status]"></span>
-                  <span>{{ toolLabel(step.name) }}</span>
+            <div class="message-body">
+              <div v-if="msg.progress?.length" class="tool-progress">
+                <div v-for="(step, stepIndex) in msg.progress" :key="`${step.name}-${stepIndex}`" :class="['tool-step', step.status]">
+                  <span class="step-indicator">
+                    <span v-if="step.status === 'running'" class="step-spinner"></span>
+                    <svg v-else-if="step.status === 'success'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                      <path d="M20 6L9 17l-5-5"/>
+                    </svg>
+                    <svg v-else-if="step.status === 'error'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                      <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                  </span>
+                  <span class="step-text">{{ toolLabel(step.name) }}</span>
                 </div>
               </div>
-              <span v-if="msg.content">{{ msg.content }}</span>
+              <div v-if="msg.content" class="message-content">{{ msg.content }}</div>
             </div>
           </div>
-          <div v-if="asking" class="message assistant">
+
+          <!-- 思考中状态 -->
+          <div v-if="asking && messages.length > 0 && !messages[messages.length - 1]?.progress?.length" class="message assistant">
             <div class="message-avatar">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M12 2a10 10 0 1 0 10 10H12V2z"/>
+                <circle cx="12" cy="12" r="4"/>
               </svg>
             </div>
-            <div class="message-content thinking">
-              <el-icon class="is-loading"><Loading /></el-icon>
-              <span>思考中...</span>
+            <div class="message-body">
+              <div class="thinking-indicator">
+                <span class="thinking-dot"></span>
+                <span class="thinking-dot"></span>
+                <span class="thinking-dot"></span>
+              </div>
             </div>
           </div>
         </div>
 
-        <!-- 输入区域 -->
-        <div class="chat-input-area">
-          <el-input
-            v-model="question"
-            type="textarea"
-            :rows="3"
-            placeholder="输入你的问题，如：005827 现在能买吗？"
-            @keyup.enter.ctrl="sendQuestion"
-            :disabled="asking"
-            class="chat-input"
-          />
-          <div class="chat-actions">
-            <span class="input-hint">Ctrl + Enter 发送</span>
-            <div class="action-buttons">
-              <el-button text @click="clearMessages" :disabled="messages.length === 0">
-                <svg class="action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <!-- 底部输入区域 -->
+        <div class="chat-footer">
+          <div class="input-wrapper" :class="{ focused: inputFocused }">
+            <el-input
+              v-model="question"
+              type="textarea"
+              :rows="2"
+              placeholder="输入你的问题..."
+              @keyup.enter.ctrl="sendQuestion"
+              @focus="inputFocused = true"
+              @blur="inputFocused = false"
+              :disabled="asking"
+              class="chat-input"
+              resize="none"
+            />
+          </div>
+          <div class="footer-actions">
+            <div class="input-hint">
+              <kbd>Ctrl</kbd> + <kbd>Enter</kbd> 发送
+            </div>
+            <div class="action-btns">
+              <el-button text size="small" @click="clearMessages" :disabled="messages.length === 0" class="clear-btn">
+                <svg class="btn-icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
                 </svg>
                 清空
@@ -160,13 +219,22 @@
                 :loading="asking"
                 @click="sendQuestion"
                 class="send-btn"
+                :disabled="!question.trim() && !asking"
               >
-                <svg v-if="!asking" class="action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <span v-if="!asking">发送</span>
+                <span v-else>思考中...</span>
+                <svg v-if="!asking" class="btn-icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
                 </svg>
-                发送
               </el-button>
             </div>
+          </div>
+          <div class="footer-disclaimer">
+            <svg class="disclaimer-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M12 9v4M12 17h.01"/>
+            </svg>
+            <span>AI 分析仅供参考，投资有风险，入市需谨慎</span>
           </div>
         </div>
       </div>
@@ -198,10 +266,16 @@ const asking = ref(false)
 const messages = ref([])
 const chatContainer = ref(null)
 const isDark = ref(document.documentElement.classList.contains('dark'))
+const inputFocused = ref(false)
 
 const toggleTheme = () => {
   isDark.value = !isDark.value
   document.documentElement.classList.toggle('dark', isDark.value)
+}
+
+const askQuick = (text) => {
+  question.value = text
+  sendQuestion()
 }
 
 const sendQuestion = async () => {
@@ -402,53 +476,214 @@ const handleDrawerClose = (done) => {
   --el-drawer-bg-color: var(--color-surface);
 }
 
-.drawer-header {
+.ai-drawer :deep(.el-drawer__body) {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* === AI Header === */
+.ai-header {
+  position: relative;
+  padding: 20px 24px;
+  overflow: hidden;
+}
+
+.ai-header-bg {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(30, 64, 175, 0.08) 0%, rgba(217, 119, 6, 0.12) 100%);
+}
+
+.ai-header-content {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  width: 100%;
 }
 
-.drawer-title {
+.ai-header-left {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: var(--font-size-lg);
-  font-weight: var(--font-weight-semibold);
+  gap: 14px;
+}
+
+.ai-logo {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--color-accent) 0%, #F59E0B 100%);
+  border-radius: 14px;
+  box-shadow: 0 4px 12px rgba(217, 119, 6, 0.25);
+}
+
+.ai-logo svg {
+  width: 24px;
+  height: 24px;
+  color: white;
+}
+
+.ai-header-title h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
   color: var(--color-foreground);
 }
 
-.drawer-icon {
-  width: 22px;
-  height: 22px;
-  color: var(--color-accent);
+.ai-close-btn {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-muted);
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
 }
 
+.ai-close-btn:hover {
+  background: var(--color-border);
+}
+
+.ai-close-btn svg {
+  width: 18px;
+  height: 18px;
+  color: var(--color-foreground-secondary);
+}
+
+/* === AI Container === */
 .ai-container {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 80px);
-}
-
-.ai-warning {
-  margin-bottom: 16px;
-  border-radius: var(--radius-md);
+  overflow: hidden;
 }
 
 /* === Chat Container === */
 .chat-container {
   flex: 1;
   overflow-y: auto;
-  padding: 16px;
-  background: var(--color-muted);
-  border-radius: var(--radius-lg);
-  margin-bottom: 16px;
+  padding: 20px;
+  background: var(--color-background);
 }
 
+/* === Welcome Section === */
+.welcome-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px 0;
+}
+
+.welcome-card {
+  text-align: center;
+  padding: 32px 24px;
+  background: var(--color-surface);
+  border-radius: 20px;
+  border: 1px solid var(--color-border);
+  margin-bottom: 24px;
+  max-width: 320px;
+}
+
+.welcome-icon {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, rgba(30, 64, 175, 0.1) 0%, rgba(217, 119, 6, 0.15) 100%);
+  border-radius: 20px;
+}
+
+.welcome-icon svg {
+  width: 32px;
+  height: 32px;
+  color: var(--color-accent);
+}
+
+.welcome-title {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-foreground);
+}
+
+.welcome-desc {
+  margin: 0;
+  font-size: 14px;
+  color: var(--color-foreground-secondary);
+  line-height: 1.5;
+}
+
+.quick-questions {
+  width: 100%;
+  max-width: 360px;
+}
+
+.quick-label {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--color-foreground-muted);
+}
+
+.quick-btns {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.quick-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+}
+
+.quick-btn:hover {
+  border-color: var(--color-accent);
+  box-shadow: 0 2px 12px rgba(217, 119, 6, 0.15);
+  transform: translateX(4px);
+}
+
+.quick-icon {
+  font-size: 18px;
+}
+
+.quick-btn span:last-child {
+  font-size: 14px;
+  color: var(--color-foreground);
+}
+
+/* === Messages === */
 .message {
   display: flex;
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
+  animation: messageIn 0.3s ease;
+}
+
+@keyframes messageIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .message.user {
@@ -463,7 +698,7 @@ const handleDrawerClose = (done) => {
   align-items: center;
   justify-content: center;
   background: var(--color-surface);
-  border-radius: var(--radius-full);
+  border-radius: 12px;
   border: 1px solid var(--color-border);
 }
 
@@ -474,82 +709,174 @@ const handleDrawerClose = (done) => {
 }
 
 .message.user .message-avatar {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
+  border-color: transparent;
 }
 
 .message.user .message-avatar svg {
   color: white;
 }
 
-.message-content {
+.message-body {
   max-width: 80%;
-  padding: 12px 16px;
-  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.message-content {
+  padding: 14px 18px;
+  border-radius: 16px;
   white-space: pre-wrap;
   word-break: break-word;
-  line-height: var(--line-height-relaxed);
-  font-size: var(--font-size-base);
+  line-height: 1.6;
+  font-size: 14px;
 }
 
 .message.user .message-content {
   background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
   color: white;
-  margin-left: auto;
+  border-radius: 16px 16px 4px 16px;
+}
+
+.message.assistant .message-body {
+  align-items: flex-start;
 }
 
 .message.assistant .message-content {
   background: var(--color-surface);
   color: var(--color-foreground);
   border: 1px solid var(--color-border);
+  border-radius: 16px 16px 16px 4px;
+  border-left: 3px solid var(--color-accent);
 }
 
-.message-content.thinking {
+/* === Tool Progress === */
+.tool-progress {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 8px;
-  color: var(--color-foreground-muted);
-  font-style: italic;
-}
-
-.drawer-tool-progress {
-  display: grid;
-  gap: 6px;
-  margin-bottom: 10px;
-  color: var(--color-foreground-muted);
-  font-size: var(--font-size-sm);
-}
-
-.drawer-tool-step {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.progress-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--color-border);
-}
-
-.progress-dot.running { background: var(--color-primary); }
-.progress-dot.success { background: #16a34a; }
-.progress-dot.error { background: #dc2626; }
-
-/* === Chat Input === */
-.chat-input-area {
-  padding: 16px;
-  background: var(--color-surface);
-  border-radius: var(--radius-lg);
+  padding: 12px 16px;
+  background: var(--color-muted);
+  border-radius: 12px;
   border: 1px solid var(--color-border);
+}
+
+.tool-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--color-foreground-secondary);
+}
+
+.step-indicator {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-surface);
+  border-radius: 50%;
+  border: 1px solid var(--color-border);
+}
+
+.step-indicator svg {
+  width: 12px;
+  height: 12px;
+}
+
+.tool-step.success .step-indicator {
+  background: rgba(22, 163, 74, 0.1);
+  border-color: #16A34A;
+}
+
+.tool-step.success .step-indicator svg {
+  color: #16A34A;
+}
+
+.tool-step.error .step-indicator {
+  background: rgba(220, 38, 38, 0.1);
+  border-color: #DC2626;
+}
+
+.tool-step.error .step-indicator svg {
+  color: #DC2626;
+}
+
+.step-spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--color-primary);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.tool-step.running .step-indicator {
+  border-color: var(--color-primary);
+}
+
+/* === Thinking Indicator === */
+.thinking-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 18px;
+  background: var(--color-surface);
+  border-radius: 16px;
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-accent);
+}
+
+.thinking-dot {
+  width: 8px;
+  height: 8px;
+  background: var(--color-accent);
+  border-radius: 50%;
+  animation: bounce 1.4s ease-in-out infinite;
+}
+
+.thinking-dot:nth-child(1) { animation-delay: 0s; }
+.thinking-dot:nth-child(2) { animation-delay: 0.2s; }
+.thinking-dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes bounce {
+  0%, 60%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-6px); }
+}
+
+/* === Chat Footer === */
+.chat-footer {
+  padding: 16px 20px;
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+}
+
+.input-wrapper {
+  position: relative;
+  border-radius: 16px;
+  background: var(--color-background);
+  border: 1px solid var(--color-border);
+  transition: all 0.2s ease;
+}
+
+.input-wrapper.focused {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.1);
 }
 
 .chat-input :deep(.el-textarea__inner) {
   background: transparent;
   border: none;
-  padding: 0;
+  padding: 14px 16px;
   font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
   resize: none;
 }
 
@@ -557,36 +884,95 @@ const handleDrawerClose = (done) => {
   box-shadow: none;
 }
 
-.chat-actions {
+.chat-input :deep(.el-textarea__inner::placeholder) {
+  color: var(--color-foreground-muted);
+}
+
+.footer-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--color-border-light);
 }
 
 .input-hint {
-  font-size: var(--font-size-xs);
+  font-size: 12px;
   color: var(--color-foreground-muted);
 }
 
-.action-buttons {
+.input-hint kbd {
+  padding: 2px 6px;
+  background: var(--color-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: inherit;
+}
+
+.action-btns {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.action-icon {
-  width: 16px;
-  height: 16px;
+.btn-icon-sm {
+  width: 14px;
+  height: 14px;
   margin-right: 4px;
+}
+
+.clear-btn {
+  color: var(--color-foreground-muted);
+}
+
+.clear-btn:hover {
+  color: var(--color-foreground-secondary);
 }
 
 .send-btn {
   display: flex;
   align-items: center;
   gap: 6px;
+  padding: 10px 20px;
+  background: linear-gradient(135deg, var(--color-accent) 0%, #F59E0B 100%);
+  border: none;
+  border-radius: 12px;
+  font-weight: 500;
+  box-shadow: 0 2px 8px rgba(217, 119, 6, 0.25);
+  transition: all 0.2s ease;
+}
+
+.send-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(217, 119, 6, 0.35);
+}
+
+.send-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.send-btn .btn-icon-sm {
+  margin-right: 0;
+  margin-left: 4px;
+}
+
+.footer-disclaimer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border-light);
+  font-size: 12px;
+  color: var(--color-foreground-muted);
+}
+
+.disclaimer-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
 
 /* === AI Floating Action Button === */
