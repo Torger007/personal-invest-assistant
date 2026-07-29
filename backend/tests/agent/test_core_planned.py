@@ -110,4 +110,7 @@ async def test_stream_planned_emits_tool_progress_and_tokens():
     ]
     assert "".join(event["content"] for event in events if event["type"] == "token") == "summary"
     assert events[-1]["answer"] == "summary"
+    assert events[-1]["llm_stream"]["chunk_count"] == 2
+    assert events[-1]["llm_stream"]["first_token_ms"] is not None
+    assert core.get_execution_trace()["llm_stream"]["chunk_count"] == 2
     assert core.llm.calls[0]["tools"] is None

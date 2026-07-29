@@ -181,18 +181,40 @@ class AgentCore:
 
         yield {"type": "summarizing"}
         answer_parts: list[str] = []
+        generation_start = time.perf_counter()
+        first_token_ms: int | None = None
+        chunk_count = 0
         async for text in self.llm.stream_chat(
             messages=[{"role": "user", "content": self._build_summary_input(user_input, plan, results)}],
             tools=None,
             system_prompt=system_prompt,
         ):
+            chunk_count += 1
+            elapsed_ms = round((time.perf_counter() - generation_start) * 1000)
+            if first_token_ms is None:
+                first_token_ms = elapsed_ms
             answer_parts.append(text)
-            yield {"type": "token", "content": text}
+            yield {
+                "type": "token",
+                "content": text,
+                "chunk_index": chunk_count,
+                "elapsed_ms": elapsed_ms,
+            }
 
         content = "".join(answer_parts) or "分析完成，但未生成有效回答。"
+        generation_metrics = {
+            "first_token_ms": first_token_ms,
+            "duration_ms": round((time.perf_counter() - generation_start) * 1000),
+            "chunk_count": chunk_count,
+        }
+        logger.info("[Agent] LLM stream metrics: %s", generation_metrics)
         self.conversation.append({"role": "assistant", "content": content})
-        self.execution_trace.update({"final_answer": content, **self.get_provider_info()})
-        yield {"type": "complete", "answer": content}
+        self.execution_trace.update({
+            "final_answer": content,
+            "llm_stream": generation_metrics,
+            **self.get_provider_info(),
+        })
+        yield {"type": "complete", "answer": content, "llm_stream": generation_metrics}
 
     @staticmethod
     def _build_tool_trace(

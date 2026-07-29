@@ -162,7 +162,7 @@
                       <path d="M18 6L6 18M6 6l12 12"/>
                     </svg>
                   </span>
-                  <span class="step-text">{{ toolLabel(step.name) }}</span>
+                  <span class="step-text">{{ toolLabel(step) }}</span>
                 </div>
               </div>
               <div v-if="msg.content" class="message-content">{{ msg.content }}</div>
@@ -283,8 +283,10 @@ const sendQuestion = async () => {
 
   const userQuestion = question.value.trim()
   messages.value.push({ role: 'user', content: userQuestion })
-  const assistantMessage = { role: 'assistant', content: '', progress: [] }
-  messages.value.push(assistantMessage)
+  messages.value.push({ role: 'assistant', content: '', progress: [] })
+  // Mutate Vue's reactive proxy, not the original plain object, so each SSE
+  // event immediately updates the drawer instead of appearing at completion.
+  const assistantMessage = messages.value[messages.value.length - 1]
   question.value = ''
   asking.value = true
 
@@ -299,6 +301,9 @@ const sendQuestion = async () => {
         if (step) step.status = event.status
       } else if (event.type === 'summarizing') {
         assistantMessage.progress.push({ name: 'summarizing', status: 'running' })
+      } else if (event.type === 'waiting' && event.stage === 'summarizing') {
+        const step = assistantMessage.progress.find(item => item.name === 'summarizing' && item.status === 'running')
+        if (step) step.elapsed = event.elapsed_ms
       } else if (event.type === 'token') {
         assistantMessage.content += event.content
       } else if (event.type === 'complete') {
@@ -319,7 +324,11 @@ const sendQuestion = async () => {
   }
 }
 
-const toolLabel = (name) => ({
+const toolLabel = (step) => {
+  if (step.name === 'summarizing') {
+    return `正在生成结论${step.elapsed ? `，已等待 ${Math.ceil(step.elapsed / 1000)} 秒` : ''}`
+  }
+  return ({
   get_portfolio: '正在读取当前持仓',
   get_market_overview: '正在读取市场概览',
   get_sector_trend: '正在分析板块趋势',
@@ -332,7 +341,8 @@ const toolLabel = (name) => ({
   get_fund_flow: '正在读取资金流',
   get_analysis_history: '正在读取历史判断',
   summarizing: '正在生成结论'
-}[name] || name)
+}[step.name] || step.name)
+}
 
 const clearMessages = () => {
   messages.value = []

@@ -198,6 +198,9 @@ const applyAgentEvent = (event, result, progress) => {
     if (item) Object.assign(item, { status: event.status, duration: event.duration_ms, count: event.data_count })
   } else if (event.type === 'summarizing') {
     progress.value.push({ name: 'summarizing', status: 'running' })
+  } else if (event.type === 'waiting' && event.stage === 'summarizing') {
+    const item = progress.value.find(step => step.name === 'summarizing' && step.status === 'running')
+    if (item) item.elapsed = event.elapsed_ms
   } else if (event.type === 'token') {
     result.value += event.content
   } else if (event.type === 'complete') {
@@ -216,7 +219,9 @@ const ToolProgress = defineComponent({
       class: ['tool-step', item.status]
     }, [
       h('span', { class: 'tool-step-state' }, item.status === 'running' ? '...' : item.status === 'success' ? '✓' : '!'),
-      h('span', { class: 'tool-step-label' }, item.name === 'summarizing' ? '正在生成结论' : item.name === 'error' ? item.message : toolLabels[item.name] || item.name),
+      h('span', { class: 'tool-step-label' }, item.name === 'summarizing'
+        ? `正在生成结论${item.elapsed ? `，已等待 ${Math.ceil(item.elapsed / 1000)} 秒` : ''}`
+        : item.name === 'error' ? item.message : toolLabels[item.name] || item.name),
       item.duration !== undefined ? h('span', { class: 'tool-step-meta' }, `${item.duration} ms${item.count != null ? ` · ${item.count} 条` : ''}`) : null
     ])))
   }

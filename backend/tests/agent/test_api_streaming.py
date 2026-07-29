@@ -1,6 +1,7 @@
+import asyncio
 import json
 
-from app.api.agent import ChatRequest, _encode_sse, chat
+from app.api.agent import ChatRequest, _encode_sse, _events_with_generation_status, chat
 from app.agent.service import agent_service
 
 
@@ -33,3 +34,16 @@ async def test_chat_endpoint_streams_agent_events():
     assert '"type": "tool_started"' in body
     assert '"type": "token"' in body
     assert '"type": "complete"' in body
+
+
+async def test_generation_status_emits_waiting_event_before_first_token():
+    async def slow_stream():
+        yield {"type": "summarizing"}
+        await asyncio.sleep(1.05)
+        yield {"type": "token", "content": "回答"}
+        yield {"type": "complete", "answer": "回答"}
+
+    events = [event async for event in _events_with_generation_status(slow_stream())]
+
+    assert any(event["type"] == "waiting" for event in events)
+    assert events[-1]["type"] == "complete"
