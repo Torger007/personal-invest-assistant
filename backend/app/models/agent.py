@@ -22,8 +22,8 @@ class AgentAnalysis(Base):
     fund_code = Column(String(10))  # 分析的基金代码（可为空）
     created_at = Column(DateTime, default=func.now())
 
-    # 分析输入（工具调用记录）
-    tool_calls = Column(JSON)  # 工具调用列表
+    # 分析执行记录。字段名为兼容现有数据库保留，内容为结构化 trace。
+    tool_calls = Column(JSON)  # question / intent / tools / final_answer / provider / model
 
     # 分析输出
     summary = Column(Text)  # 摘要

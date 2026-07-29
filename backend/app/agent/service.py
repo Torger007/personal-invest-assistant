@@ -50,13 +50,14 @@ class AgentService:
             prompt,
             plan=self.planner.plan_portfolio_analysis(),
             system_prompt=system_prompt,
+            trace_question="组合自主分析",
         )
 
         duration = int(time.time() - start_time)
 
         await self._save_analysis(
             analysis_type="autonomous",
-            tool_calls=self.core.get_conversation(),
+            execution_record=self.core.get_execution_trace(),
             summary=result,
             duration_seconds=duration
         )
@@ -87,13 +88,14 @@ class AgentService:
             context_prompt,
             plan=self.planner.plan_question(question),
             system_prompt=system_prompt,
+            trace_question=question,
         )
 
         duration = int(time.time() - start_time)
 
         await self._save_analysis(
             analysis_type="interactive",
-            tool_calls=self.core.get_conversation(),
+            execution_record=self.core.get_execution_trace(),
             summary=result,
             duration_seconds=duration
         )
@@ -103,7 +105,7 @@ class AgentService:
     async def _save_analysis(
         self,
         analysis_type: str,
-        tool_calls: list,
+        execution_record: dict,
         summary: str,
         duration_seconds: int
     ):
@@ -113,7 +115,7 @@ class AgentService:
             async with AsyncSessionLocal() as session:
                 analysis = AgentAnalysis(
                     analysis_type=analysis_type,
-                    tool_calls=tool_calls,
+                    tool_calls=execution_record,
                     summary=summary,
                     llm_provider=provider_info["provider"],
                     llm_model=provider_info["model"],

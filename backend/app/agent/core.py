@@ -6,6 +6,8 @@ Agent Core
 """
 import json
 import logging
+import time
+from copy import deepcopy
 from typing import Any, List, Dict
 
 from app.agent.providers import create_provider, LLMResponse
@@ -25,6 +27,7 @@ class AgentCore:
         self.llm = create_provider()
         self.tools = tool_registry
         self.conversation: List[Dict[str, Any]] = []
+        self.execution_trace: Dict[str, Any] = {}
 
     async def run(self, user_input: str, system_prompt: str | None = None) -> str:
         """
@@ -102,21 +105,33 @@ class AgentCore:
         user_input: str,
         plan: ToolPlan,
         system_prompt: str | None = None,
+        trace_question: str | None = None,
     ) -> str:
         """Execute a deterministic plan, then ask the LLM to summarize facts only."""
         self.conversation.append({"role": "user", "content": user_input})
         self.conversation.append({"role": "planner", "plan": plan.to_dict()})
+
+        self.execution_trace = {
+            "question": trace_question or user_input,
+            "intent": plan.intent,
+            "tools": [],
+        }
 
         results: list[dict[str, Any]] = []
         result_by_tool: dict[str, dict[str, Any]] = {}
         for step in plan.steps:
             arguments = self._resolve_arguments(step.arguments, result_by_tool)
             logger.info("[Agent] planned tool: %s args: %s", step.tool_name, arguments)
+            tool_start = time.perf_counter()
             result = await self.tools.execute(step.tool_name, arguments)
+            duration_ms = round((time.perf_counter() - tool_start) * 1000)
             result_by_tool[step.tool_name] = result
             tool_result = {"tool_name": step.tool_name, "arguments": arguments, "result": result}
             results.append(tool_result)
             self.conversation.append({"role": "tool_result", **tool_result})
+            self.execution_trace["tools"].append(
+                self._build_tool_trace(step.tool_name, step.arguments, result, duration_ms)
+            )
 
         response: LLMResponse = await self.llm.chat(
             messages=[{"role": "user", "content": self._build_summary_input(user_input, plan, results)}],
@@ -125,7 +140,39 @@ class AgentCore:
         )
         content = response.content or "分析完成，但未生成有效回答。"
         self.conversation.append({"role": "assistant", "content": content})
+        self.execution_trace.update({
+            "final_answer": content,
+            **self.get_provider_info(),
+        })
         return content
+
+    @staticmethod
+    def _build_tool_trace(
+        tool_name: str,
+        planned_arguments: dict[str, Any],
+        result: dict[str, Any],
+        duration_ms: int,
+    ) -> dict[str, Any]:
+        """Create a compact, queryable record without persisting large raw outputs."""
+        trace = {
+            "name": tool_name,
+            # Preserve references instead of persisting large dependent outputs,
+            # such as the NAV array passed into analyze_technical.
+            "args": AgentCore._json_safe(planned_arguments),
+            "status": result.get("status", "unknown"),
+            "duration_ms": duration_ms,
+            "data_count": AgentCore._json_safe(result.get("count")),
+        }
+        if result.get("message"):
+            trace["message"] = result["message"]
+        if result.get("error"):
+            trace["error"] = result["error"]
+        return trace
+
+    @staticmethod
+    def _json_safe(value: Any) -> Any:
+        """Convert dates, Decimals, and other tool values into JSON-safe values."""
+        return json.loads(json.dumps(value, ensure_ascii=False, default=str))
 
     @staticmethod
     def _resolve_arguments(
@@ -159,10 +206,15 @@ class AgentCore:
     def reset(self):
         """重置对话历史"""
         self.conversation = []
+        self.execution_trace = {}
 
     def get_conversation(self) -> List[Dict[str, Any]]:
         """获取当前对话历史"""
         return self.conversation.copy()
+
+    def get_execution_trace(self) -> Dict[str, Any]:
+        """Return the structured record persisted for a planned agent run."""
+        return deepcopy(self.execution_trace)
 
     def get_provider_info(self) -> Dict[str, str]:
         """获取当前使用的 LLM 信息"""

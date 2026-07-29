@@ -9,7 +9,11 @@ class FakeTools:
 
     async def execute(self, name, arguments):
         self.calls.append((name, arguments))
-        return {"status": "success", "data": [{"date": "2026-01-01", "unit_nav": 1.0}]}
+        return {
+            "status": "success",
+            "data": [{"date": "2026-01-01", "unit_nav": 1.0}],
+            "count": 1,
+        }
 
 
 class FakeLLM:
@@ -55,3 +59,26 @@ async def test_planned_run_executes_references_and_hides_tools_from_llm():
         "tool_result",
         "assistant",
     ]
+    assert core.get_execution_trace() == {
+        "question": "008163 能否加仓？",
+        "intent": "single_fund",
+        "tools": [
+            {
+                "name": "get_fund_nav",
+                "args": {"fund_code": "008163"},
+                "status": "success",
+                "duration_ms": core.get_execution_trace()["tools"][0]["duration_ms"],
+                "data_count": 1,
+            },
+            {
+                "name": "analyze_technical",
+                "args": {"data": {"$ref": "get_fund_nav.data"}},
+                "status": "success",
+                "duration_ms": core.get_execution_trace()["tools"][1]["duration_ms"],
+                "data_count": 1,
+            },
+        ],
+        "final_answer": "summary",
+        "provider": "fake",
+        "model": "fake-model",
+    }
