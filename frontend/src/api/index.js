@@ -47,11 +47,22 @@ export const agentApi = {
   triggerAnalysis: () => api.post('/agent/analyze'),
   getAnalysisTask: (taskId) => api.get(`/agent/analyze/${taskId}`),
   getHistory: (limit = 10) => api.get('/agent/history', { params: { limit } }),
-  chatStream: (question, onEvent) => readSseResponse('/api/agent/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question })
-  }, onEvent),
+  chatStream: (question, conversationId, onEvent) => {
+    if (typeof conversationId === 'function') {
+      onEvent = conversationId
+      conversationId = null
+    }
+    return readSseResponse('/api/agent/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, conversation_id: conversationId || null })
+    }, onEvent)
+  },
+  createConversation: () => api.post('/agent/conversations'),
+  getConversations: (limit = 30) => api.get('/agent/conversations', { params: { limit } }),
+  getConversation: (conversationId) => api.get(`/agent/conversations/${conversationId}`),
+  archiveConversation: (conversationId) => api.post(`/agent/conversations/${conversationId}/archive`),
+  getReport: (analysisId) => api.get(`/agent/reports/${analysisId}`),
   subscribeAnalysis: (taskId, onEvent) => subscribeSse(`/api/agent/analyze/${taskId}/events`, onEvent)
 }
 

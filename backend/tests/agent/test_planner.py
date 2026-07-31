@@ -30,3 +30,24 @@ def test_duplicate_fund_codes_are_deduplicated_for_comparison():
     assert plan.intent == "fund_comparison"
     assert plan.fund_codes == ["008163", "021033"]
     assert plan.steps[0].arguments == {"fund_codes": ["008163", "021033"]}
+
+
+def test_followup_uses_the_single_fund_in_active_context():
+    plan = AgentPlanner().plan_question(
+        "那只基金现在能不能加仓？",
+        {"last_fund_codes": ["008163"]},
+    )
+
+    assert plan.intent == "single_fund"
+    assert plan.fund_codes == ["008163"]
+    assert plan.steps[0].arguments == {"fund_code": "008163"}
+
+
+def test_followup_does_not_guess_when_context_has_multiple_funds():
+    plan = AgentPlanner().plan_question(
+        "继续说",
+        {"last_fund_codes": ["008163", "005827"]},
+    )
+
+    assert plan.intent == "general"
+    assert plan.fund_codes == []

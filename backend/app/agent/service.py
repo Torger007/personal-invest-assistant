@@ -5,17 +5,24 @@ Agent Service
 """
 import time
 import logging
+from datetime import datetime, timedelta
 from typing import Any, AsyncIterator
-from sqlalchemy import select
+from uuid import uuid4
+
+from sqlalchemy import func, select
 
 from app.agent.core import AgentCore
 from app.agent.planner import AgentPlanner
 from app.agent.prompt_loader import get_agent_system_prompt, render_agent_prompt
 from app.portfolio import get_portfolio_codes, get_portfolio_info
-from app.models.agent import AgentAnalysis
+from app.models.agent import AgentAnalysis, AgentConversation, AgentMessage
 from app.utils.db import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
+
+RECENT_MESSAGE_LIMIT = 8
+SUMMARY_THRESHOLD = 20
+ARCHIVE_AFTER_DAYS = 90
 
 
 class AgentService:
@@ -37,7 +44,7 @@ class AgentService:
                 raise RuntimeError(event["message"])
         raise RuntimeError("组合分析未生成结果")
 
-    async def ask_question(self, question: str) -> str:
+    async def ask_question(self, question: str, conversation_id: str | None = None) -> str:
         """问答交互模式：回答用户投资问题。
 
         Args:
@@ -46,27 +53,56 @@ class AgentService:
         Returns:
             str: Agent 回答
         """
-        async for event in self.stream_question(question):
+        async for event in self.stream_question(question, conversation_id):
             if event["type"] == "complete":
                 return event["answer"]
             if event["type"] == "error":
                 raise RuntimeError(event["message"])
         raise RuntimeError("问答未生成结果")
 
-    async def stream_question(self, question: str) -> AsyncIterator[dict[str, Any]]:
+    async def stream_question(
+        self, question: str, conversation_id: str | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
         """Stream a question's tool progress and generated answer."""
+        conversation, active_context, prior_messages = await self._prepare_conversation(
+            question, conversation_id,
+        )
+        yield {
+            "type": "conversation",
+            "conversation_id": conversation.id,
+            "title": conversation.title,
+        }
+
         portfolio_codes = get_portfolio_codes()
         prompt = render_agent_prompt(
             "interactive_question",
             portfolio_codes=", ".join(portfolio_codes),
             question=question,
+            conversation_context=self._format_conversation_context(
+                conversation.summary, prior_messages,
+            ),
         )
+        plan = self.planner.plan_question(question, active_context)
         async for event in self._stream_and_save(
             analysis_type="interactive",
             prompt=prompt,
-            plan=self.planner.plan_question(question),
+            plan=plan,
             trace_question=question,
         ):
+            if event["type"] == "complete":
+                event["conversation_id"] = conversation.id
+                try:
+                    message = await self._save_assistant_message(
+                        conversation.id,
+                        question,
+                        event["answer"],
+                        plan,
+                        event.get("analysis_id"),
+                    )
+                    event["message_id"] = message.id
+                except Exception:
+                    logger.exception("[Agent] 保存会话消息失败")
+                    event["persistence_error"] = True
             yield event
 
     async def stream_portfolio_analysis(self) -> AsyncIterator[dict[str, Any]]:
@@ -102,7 +138,7 @@ class AgentService:
                 trace_question=trace_question,
             ):
                 if event["type"] == "complete":
-                    await self._save_analysis(
+                    event["analysis_id"] = await self._save_analysis(
                         core=core,
                         analysis_type=analysis_type,
                         execution_record=core.get_execution_trace(),
@@ -114,6 +150,204 @@ class AgentService:
             logger.exception("[Agent] 流式执行失败")
             yield {"type": "error", "message": str(e)}
 
+    async def _prepare_conversation(
+        self, question: str, conversation_id: str | None,
+    ) -> tuple[AgentConversation, dict[str, Any], list[AgentMessage]]:
+        """Create or load a conversation and persist its incoming user message."""
+        async with AsyncSessionLocal() as session:
+            if conversation_id:
+                conversation = await session.get(AgentConversation, conversation_id)
+                if not conversation or conversation.archived_at:
+                    raise ValueError("会话不存在或已归档")
+            else:
+                conversation = AgentConversation(
+                    id=str(uuid4()),
+                    title=self._make_title(question),
+                    active_context={},
+                )
+                session.add(conversation)
+                await session.flush()
+
+            prior_messages = list((await session.execute(
+                select(AgentMessage)
+                .where(AgentMessage.conversation_id == conversation.id)
+                .order_by(AgentMessage.created_at.desc())
+                .limit(RECENT_MESSAGE_LIMIT)
+            )).scalars().all())
+            prior_messages.reverse()
+            active_context = dict(conversation.active_context or {})
+            session.add(AgentMessage(
+                conversation_id=conversation.id,
+                role="user",
+                content=question,
+            ))
+            conversation.last_message_at = datetime.now()
+            conversation.updated_at = datetime.now()
+            await session.commit()
+            await session.refresh(conversation)
+            return conversation, active_context, prior_messages
+
+    async def _save_assistant_message(
+        self,
+        conversation_id: str,
+        question: str,
+        answer: str,
+        plan,
+        analysis_id: int | None,
+    ) -> AgentMessage:
+        """Persist the answer and update context used by deterministic follow-ups."""
+        async with AsyncSessionLocal() as session:
+            conversation = await session.get(AgentConversation, conversation_id)
+            if not conversation:
+                raise ValueError("会话不存在")
+            message = AgentMessage(
+                conversation_id=conversation_id,
+                role="assistant",
+                content=answer,
+                intent=plan.intent,
+                plan=plan.to_dict(),
+                analysis_id=analysis_id,
+            )
+            session.add(message)
+            await session.flush()
+
+            active_context = dict(conversation.active_context or {})
+            if plan.fund_codes:
+                active_context["last_fund_codes"] = plan.fund_codes
+            active_context["last_intent"] = plan.intent
+            active_context["last_question"] = question[:200]
+            conversation.active_context = active_context
+            conversation.last_message_at = datetime.now()
+            conversation.updated_at = datetime.now()
+            conversation.summary = await self._build_summary(session, conversation)
+            await session.commit()
+            await session.refresh(message)
+            return message
+
+    async def create_conversation(self) -> dict:
+        async with AsyncSessionLocal() as session:
+            conversation = AgentConversation(
+                id=str(uuid4()), title="新对话", active_context={},
+            )
+            session.add(conversation)
+            await session.commit()
+            return self._conversation_to_dict(conversation, 0)
+
+    async def list_conversations(self, limit: int = 30) -> list[dict]:
+        limit = max(1, min(limit, 100))
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                AgentConversation.__table__.update()
+                .where(AgentConversation.archived_at.is_(None))
+                .where(AgentConversation.last_message_at < datetime.now() - timedelta(days=ARCHIVE_AFTER_DAYS))
+                .values(archived_at=datetime.now(), updated_at=datetime.now())
+            )
+            await session.commit()
+            conversations = list((await session.execute(
+                select(AgentConversation)
+                .where(AgentConversation.archived_at.is_(None))
+                .order_by(AgentConversation.last_message_at.desc())
+                .limit(limit)
+            )).scalars().all())
+            return [self._conversation_to_dict(
+                conversation,
+                await session.scalar(select(func.count(AgentMessage.id)).where(
+                    AgentMessage.conversation_id == conversation.id,
+                )) or 0,
+            ) for conversation in conversations]
+
+    async def get_conversation(self, conversation_id: str) -> dict:
+        async with AsyncSessionLocal() as session:
+            conversation = await session.get(AgentConversation, conversation_id)
+            if not conversation:
+                raise ValueError("会话不存在")
+            messages = list((await session.execute(
+                select(AgentMessage)
+                .where(AgentMessage.conversation_id == conversation_id)
+                .order_by(AgentMessage.created_at.asc())
+            )).scalars().all())
+            return {
+                **self._conversation_to_dict(conversation, len(messages)),
+                "messages": [self._message_to_dict(message) for message in messages],
+            }
+
+    async def archive_conversation(self, conversation_id: str) -> None:
+        async with AsyncSessionLocal() as session:
+            conversation = await session.get(AgentConversation, conversation_id)
+            if not conversation:
+                raise ValueError("会话不存在")
+            conversation.archived_at = datetime.now()
+            conversation.updated_at = datetime.now()
+            await session.commit()
+
+    async def get_analysis_report(self, analysis_id: int) -> dict:
+        async with AsyncSessionLocal() as session:
+            analysis = await session.get(AgentAnalysis, analysis_id)
+            if not analysis:
+                raise ValueError("报告不存在")
+            return {
+                "id": analysis.id,
+                "summary": analysis.summary,
+                "trace": analysis.tool_calls,
+                "created_at": str(analysis.created_at),
+                "duration": analysis.duration_seconds,
+            }
+
+    async def _build_summary(
+        self, session, conversation: AgentConversation,
+    ) -> str | None:
+        messages = list((await session.execute(
+            select(AgentMessage)
+            .where(AgentMessage.conversation_id == conversation.id)
+            .order_by(AgentMessage.created_at.asc())
+        )).scalars().all())
+        if len(messages) <= SUMMARY_THRESHOLD:
+            return conversation.summary
+        older_messages = messages[:-RECENT_MESSAGE_LIMIT]
+        lines = ["早期对话摘要："]
+        for message in older_messages[-12:]:
+            role = "用户" if message.role == "user" else "助手"
+            content = " ".join(message.content.split())[:220]
+            lines.append(f"{role}：{content}")
+        return "\n".join(lines)[:3000]
+
+    @staticmethod
+    def _make_title(question: str) -> str:
+        return " ".join(question.split())[:80] or "新对话"
+
+    @staticmethod
+    def _format_conversation_context(
+        summary: str | None, messages: list[AgentMessage],
+    ) -> str:
+        sections = [summary] if summary else []
+        for message in messages:
+            role = "用户" if message.role == "user" else "助手"
+            sections.append(f"{role}：{' '.join(message.content.split())[:500]}")
+        return "\n".join(section for section in sections if section) or "无"
+
+    @staticmethod
+    def _conversation_to_dict(conversation: AgentConversation, message_count: int) -> dict:
+        return {
+            "id": conversation.id,
+            "title": conversation.title,
+            "summary": conversation.summary,
+            "last_message_at": str(conversation.last_message_at),
+            "created_at": str(conversation.created_at),
+            "message_count": message_count,
+        }
+
+    @staticmethod
+    def _message_to_dict(message: AgentMessage) -> dict:
+        return {
+            "id": message.id,
+            "role": message.role,
+            "content": message.content,
+            "intent": message.intent,
+            "plan": message.plan,
+            "analysis_id": message.analysis_id,
+            "created_at": str(message.created_at),
+        }
+
     async def _save_analysis(
         self,
         core: AgentCore,
@@ -121,7 +355,7 @@ class AgentService:
         execution_record: dict,
         summary: str,
         duration_seconds: int
-    ):
+    ) -> int | None:
         """保存分析历史到数据库"""
         try:
             provider_info = core.get_provider_info()
@@ -136,8 +370,11 @@ class AgentService:
                 )
                 session.add(analysis)
                 await session.commit()
+                await session.refresh(analysis)
+                return analysis.id
         except Exception as e:
             logger.error(f"[Agent] 保存分析历史失败: {e}")
+            return None
 
     async def get_latest_analysis(self, limit: int = 10) -> list:
         """获取最新的分析历史"""

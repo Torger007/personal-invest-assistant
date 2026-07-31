@@ -39,10 +39,15 @@ class AgentPlanner:
     _COMPARE_KEYWORDS = ("比较", "对比", "哪个好", "怎么选", "优于")
     _REFRESH_ADVICE_KEYWORDS = ("生成建议", "刷新建议", "更新建议", "重新生成")
 
-    def plan_question(self, question: str) -> ToolPlan:
+    def plan_question(self, question: str, active_context: dict[str, Any] | None = None) -> ToolPlan:
         """Return the fixed plan for an interactive user question."""
         normalized = question.strip()
         fund_codes = self._extract_fund_codes(normalized)
+
+        if not fund_codes and self._is_followup(normalized):
+            previous_codes = (active_context or {}).get("last_fund_codes") or []
+            if len(previous_codes) == 1:
+                fund_codes = [str(previous_codes[0])]
 
         if self._contains(normalized, self._HISTORY_KEYWORDS):
             return ToolPlan("history", [PlanStep("get_analysis_history")])
@@ -102,3 +107,9 @@ class AgentPlanner:
     @staticmethod
     def _contains(text: str, keywords: tuple[str, ...]) -> bool:
         return any(keyword in text for keyword in keywords)
+
+    @staticmethod
+    def _is_followup(text: str) -> bool:
+        return any(keyword in text for keyword in (
+            "那只", "这只", "这个基金", "它", "继续", "刚才", "刚刚", "上述", "那现在",
+        ))

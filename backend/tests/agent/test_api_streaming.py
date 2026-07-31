@@ -17,8 +17,10 @@ def test_sse_encoder_emits_json_data_frame():
 
 
 async def test_chat_endpoint_streams_agent_events():
-    async def fake_stream(question):
+    async def fake_stream(question, conversation_id=None):
         assert question == "测试问题"
+        assert conversation_id == "conversation-1"
+        yield {"type": "conversation", "conversation_id": conversation_id}
         yield {"type": "tool_started", "name": "get_market_overview"}
         yield {"type": "token", "content": "回答"}
         yield {"type": "complete", "answer": "回答"}
@@ -26,12 +28,13 @@ async def test_chat_endpoint_streams_agent_events():
     original_stream = agent_service.stream_question
     agent_service.stream_question = fake_stream
     try:
-        response = await chat(ChatRequest(question="测试问题"))
+        response = await chat(ChatRequest(question="测试问题", conversation_id="conversation-1"))
         body = "".join([chunk async for chunk in response.body_iterator])
     finally:
         agent_service.stream_question = original_stream
 
     assert '"type": "tool_started"' in body
+    assert '"type": "conversation"' in body
     assert '"type": "token"' in body
     assert '"type": "complete"' in body
 

@@ -17,6 +17,7 @@ router = APIRouter(prefix="/agent", tags=["Agent"])
 
 class ChatRequest(BaseModel):
     question: str
+    conversation_id: str | None = None
 
 
 @router.post("/analyze")
@@ -30,7 +31,9 @@ async def trigger_analysis():
 async def chat(request: ChatRequest):
     """Stream tool progress and answer tokens for an interactive question."""
     async def events():
-        async for event in _events_with_generation_status(agent_service.stream_question(request.question)):
+        async for event in _events_with_generation_status(
+            agent_service.stream_question(request.question, request.conversation_id)
+        ):
             yield _encode_sse(event)
         yield "event: close\ndata: {}\n\n"
 
@@ -39,6 +42,42 @@ async def chat(request: ChatRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.post("/conversations")
+async def create_conversation():
+    """Create an empty interactive conversation."""
+    return await agent_service.create_conversation()
+
+
+@router.get("/conversations")
+async def list_conversations(limit: int = 30):
+    return {"conversations": await agent_service.list_conversations(limit)}
+
+
+@router.get("/conversations/{conversation_id}")
+async def get_conversation(conversation_id: str):
+    try:
+        return await agent_service.get_conversation(conversation_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.post("/conversations/{conversation_id}/archive")
+async def archive_conversation(conversation_id: str):
+    try:
+        await agent_service.archive_conversation(conversation_id)
+        return {"status": "archived"}
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.get("/reports/{analysis_id}")
+async def get_analysis_report(analysis_id: int):
+    try:
+        return await agent_service.get_analysis_report(analysis_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @router.get("/analyze/{task_id}")

@@ -1,7 +1,7 @@
 from app.models.fund import Fund, FundNav
 from app.models.market import IndexDaily, FundFlow, SectorBoard, SectorDaily
 from app.models.advice import AdviceRecord
-from app.models.agent import AgentSettings, AgentAnalysis
+from app.models.agent import AgentSettings, AgentAnalysis, AgentConversation, AgentMessage
 
 __all__ = [
     "Fund",
@@ -13,4 +13,6 @@ __all__ = [
     "AdviceRecord",
     "AgentSettings",
     "AgentAnalysis",
+    "AgentConversation",
+    "AgentMessage",
 ]

@@ -104,6 +104,44 @@
       </div>
 
       <div class="ai-container">
+        <section class="conversation-history">
+          <div class="history-toolbar">
+            <button
+              class="history-toggle"
+              type="button"
+              :aria-expanded="historyExpanded"
+              @click="historyExpanded = !historyExpanded"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="9"/>
+                <path d="M12 7v5l3 2"/>
+              </svg>
+              <span>历史会话</span>
+              <span v-if="conversations.length" class="history-count">{{ conversations.length }}</span>
+              <span class="history-chevron">{{ historyExpanded ? '▲' : '▼' }}</span>
+            </button>
+            <el-tooltip content="新建会话" placement="bottom">
+              <button class="history-icon-button" type="button" :disabled="asking" @click="startNewConversation">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+              </button>
+            </el-tooltip>
+          </div>
+          <div v-if="historyExpanded" class="history-list" v-loading="historyLoading">
+            <div v-if="!historyLoading && !conversations.length" class="history-empty">暂无历史会话</div>
+            <div v-for="conversation in conversations" :key="conversation.id" class="history-row" :class="{ active: conversation.id === currentConversationId }">
+              <button type="button" class="history-row-main" :disabled="asking" @click="restoreConversation(conversation.id)">
+                <span class="history-date">{{ formatConversationTime(conversation.last_message_at) }}</span>
+                <span class="history-title">{{ conversation.title }}</span>
+              </button>
+              <el-tooltip content="归档会话" placement="left">
+                <button class="history-icon-button archive" type="button" :disabled="asking" @click="archiveConversation(conversation.id)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16v13H4zM3 4h18v3H3zM9 11h6"/></svg>
+                </button>
+              </el-tooltip>
+            </div>
+          </div>
+        </section>
+
         <!-- 对话历史 -->
         <div class="chat-container" ref="chatContainer">
           <!-- 欢迎引导（无消息时显示） -->
@@ -166,6 +204,7 @@
                 </div>
               </div>
               <div v-if="msg.content" class="message-content">{{ msg.content }}</div>
+              <button v-if="msg.analysisId" type="button" class="report-link" @click="viewReport(msg.analysisId)">查看报告</button>
             </div>
           </div>
 
@@ -208,11 +247,11 @@
               <kbd>Ctrl</kbd> + <kbd>Enter</kbd> 发送
             </div>
             <div class="action-btns">
-              <el-button text size="small" @click="clearMessages" :disabled="messages.length === 0" class="clear-btn">
+              <el-button text size="small" @click="startNewConversation" :disabled="asking" class="clear-btn">
                 <svg class="btn-icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                  <path d="M12 5v14M5 12h14"/>
                 </svg>
-                清空
+                新对话
               </el-button>
               <el-button
                 type="primary"
@@ -240,6 +279,18 @@
       </div>
     </el-drawer>
 
+    <el-dialog v-model="reportVisible" title="分析报告" width="560px" append-to-body>
+      <div v-loading="reportLoading" class="report-dialog-content">
+        <template v-if="currentReport">
+          <p class="report-meta">耗时 {{ currentReport.duration }} 秒 · {{ currentReport.created_at }}</p>
+          <div class="report-summary">{{ currentReport.summary }}</div>
+          <div v-if="currentReport.trace?.tools?.length" class="report-tools">
+            <span v-for="tool in currentReport.trace.tools" :key="`${tool.name}-${tool.started_at || ''}`">{{ tool.name }}</span>
+          </div>
+        </template>
+      </div>
+    </el-dialog>
+
     <!-- 悬浮 AI 助手球 -->
     <div class="ai-fab" @click="drawerVisible = true" v-if="!drawerVisible">
       <div class="ai-fab-inner">
@@ -255,7 +306,7 @@
 </template>
 
 <script setup>
-import { ref, nextTick } from 'vue'
+import { ref, nextTick, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import { agentApi } from './api'
@@ -267,6 +318,13 @@ const messages = ref([])
 const chatContainer = ref(null)
 const isDark = ref(document.documentElement.classList.contains('dark'))
 const inputFocused = ref(false)
+const conversations = ref([])
+const currentConversationId = ref(null)
+const historyExpanded = ref(false)
+const historyLoading = ref(false)
+const reportVisible = ref(false)
+const reportLoading = ref(false)
+const currentReport = ref(null)
 
 const toggleTheme = () => {
   isDark.value = !isDark.value
@@ -293,8 +351,10 @@ const sendQuestion = async () => {
   scrollToBottom()
 
   try {
-    await agentApi.chatStream(userQuestion, event => {
-      if (event.type === 'tool_started') {
+    await agentApi.chatStream(userQuestion, currentConversationId.value, event => {
+      if (event.type === 'conversation') {
+        currentConversationId.value = event.conversation_id
+      } else if (event.type === 'tool_started') {
         assistantMessage.progress.push({ name: event.name, status: 'running' })
       } else if (event.type === 'tool_completed') {
         const step = [...assistantMessage.progress].reverse().find(item => item.name === event.name && item.status === 'running')
@@ -308,6 +368,8 @@ const sendQuestion = async () => {
         assistantMessage.content += event.content
       } else if (event.type === 'complete') {
         assistantMessage.content = event.answer || assistantMessage.content
+        assistantMessage.analysisId = event.analysis_id || null
+        assistantMessage.messageId = event.message_id || null
         const step = assistantMessage.progress.find(item => item.name === 'summarizing' && item.status === 'running')
         if (step) step.status = 'success'
       } else if (event.type === 'error') {
@@ -320,6 +382,7 @@ const sendQuestion = async () => {
     assistantMessage.content = '抱歉，问答失败了，请稍后重试。'
   } finally {
     asking.value = false
+    loadConversations()
     scrollToBottom()
   }
 }
@@ -343,6 +406,96 @@ const toolLabel = (step) => {
   summarizing: '正在生成结论'
 }[step.name] || step.name)
 }
+
+const loadConversations = async () => {
+  historyLoading.value = true
+  try {
+    const { data } = await agentApi.getConversations()
+    conversations.value = data.conversations || []
+  } catch (error) {
+    ElMessage.error('加载历史会话失败: ' + error.message)
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+const startNewConversation = async () => {
+  if (asking.value) return
+  try {
+    const { data } = await agentApi.createConversation()
+    currentConversationId.value = data.id
+    messages.value = []
+    question.value = ''
+    await loadConversations()
+    ElMessage.success('已新建对话')
+  } catch (error) {
+    ElMessage.error('新建对话失败: ' + error.message)
+  }
+}
+
+const restoreConversation = async (conversationId) => {
+  if (asking.value || conversationId === currentConversationId.value) {
+    historyExpanded.value = false
+    return
+  }
+  try {
+    const { data } = await agentApi.getConversation(conversationId)
+    currentConversationId.value = data.id
+    messages.value = (data.messages || []).map(message => ({
+      role: message.role,
+      content: message.content,
+      analysisId: message.analysis_id,
+      messageId: message.id,
+      progress: []
+    }))
+    historyExpanded.value = false
+    scrollToBottom()
+  } catch (error) {
+    ElMessage.error('恢复历史会话失败: ' + error.message)
+  }
+}
+
+const archiveConversation = async (conversationId) => {
+  if (asking.value) return
+  try {
+    await agentApi.archiveConversation(conversationId)
+    if (conversationId === currentConversationId.value) {
+      currentConversationId.value = null
+      messages.value = []
+    }
+    await loadConversations()
+  } catch (error) {
+    ElMessage.error('归档会话失败: ' + error.message)
+  }
+}
+
+const viewReport = async (analysisId) => {
+  reportVisible.value = true
+  reportLoading.value = true
+  currentReport.value = null
+  try {
+    const { data } = await agentApi.getReport(analysisId)
+    currentReport.value = data
+  } catch (error) {
+    ElMessage.error('加载报告失败: ' + error.message)
+  } finally {
+    reportLoading.value = false
+  }
+}
+
+const formatConversationTime = (value) => {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const now = new Date()
+  const isToday = date.toDateString() === now.toDateString()
+  if (isToday) return `今天 ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  if (date.toDateString() === yesterday.toDateString()) return `昨天 ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+  return `${date.getMonth() + 1}月${date.getDate()}日`
+}
+
+onMounted(loadConversations)
 
 const clearMessages = () => {
   messages.value = []
@@ -575,6 +728,141 @@ const handleDrawerClose = (done) => {
   overflow: hidden;
 }
 
+.conversation-history {
+  flex: 0 0 auto;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.history-toolbar {
+  min-height: 44px;
+  padding: 0 16px 0 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.history-toggle,
+.history-icon-button,
+.history-row-main {
+  border: 0;
+  background: transparent;
+  color: var(--color-foreground-secondary);
+  cursor: pointer;
+}
+
+.history-toggle {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.history-toggle svg,
+.history-icon-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.history-count {
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 9px;
+  background: var(--color-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.history-chevron {
+  font-size: 9px;
+  margin-left: 2px;
+}
+
+.history-icon-button {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+}
+
+.history-icon-button:hover:not(:disabled),
+.history-toggle:hover {
+  color: var(--color-accent);
+  background: var(--color-muted);
+}
+
+.history-icon-button:disabled,
+.history-row-main:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.history-list {
+  max-height: 220px;
+  overflow-y: auto;
+  border-top: 1px solid var(--color-border);
+}
+
+.history-empty {
+  padding: 16px 20px;
+  font-size: 13px;
+  color: var(--color-foreground-muted);
+}
+
+.history-row {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px 0 20px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.history-row:last-child {
+  border-bottom: 0;
+}
+
+.history-row.active {
+  background: var(--color-muted);
+}
+
+.history-row-main {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 2px;
+  padding: 8px 0;
+  text-align: left;
+}
+
+.history-row-main:hover:not(:disabled) .history-title {
+  color: var(--color-accent);
+}
+
+.history-date {
+  font-size: 11px;
+  color: var(--color-foreground-muted);
+}
+
+.history-title {
+  overflow: hidden;
+  color: var(--color-foreground);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-icon-button.archive {
+  opacity: 0;
+}
+
+.history-row:hover .history-icon-button.archive,
+.history-row.active .history-icon-button.archive {
+  opacity: 1;
+}
+
 /* === Chat Container === */
 .chat-container {
   flex: 1;
@@ -759,6 +1047,50 @@ const handleDrawerClose = (done) => {
   border: 1px solid var(--color-border);
   border-radius: 16px 16px 16px 4px;
   border-left: 3px solid var(--color-accent);
+}
+
+.report-link {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--color-accent);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.report-link:hover {
+  text-decoration: underline;
+}
+
+.report-dialog-content {
+  min-height: 72px;
+}
+
+.report-meta {
+  margin: 0 0 12px;
+  color: var(--color-foreground-muted);
+  font-size: 12px;
+}
+
+.report-summary {
+  white-space: pre-wrap;
+  color: var(--color-foreground);
+  line-height: 1.65;
+}
+
+.report-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 16px;
+}
+
+.report-tools span {
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: var(--color-muted);
+  color: var(--color-foreground-secondary);
+  font-size: 12px;
 }
 
 /* === Tool Progress === */
