@@ -29,9 +29,11 @@ app.include_router(tasks.router, prefix=settings.API_PREFIX, dependencies=[Depen
 
 @app.on_event("startup")
 async def startup_event():
-    await run_migrations()
+    if settings.RUN_MIGRATIONS_ON_STARTUP:
+        await run_migrations()
     await provision_bootstrap_admin()
-    start_scheduler()
+    if settings.SCHEDULER_ENABLED:
+        start_scheduler()
 
 
 @app.on_event("shutdown")

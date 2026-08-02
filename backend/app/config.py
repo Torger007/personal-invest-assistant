@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     DEBUG: bool = True
 
     # 数据库配置
-    DATABASE_URL: str = "sqlite:///./data/database.db"
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:password@localhost:5432/invest_assistant"
 
     # 数据目录
     DATA_DIR: Path = Path(__file__).parent.parent / "data"
@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "http://localhost:3001,http://127.0.0.1:3001"
     BOOTSTRAP_ADMIN_USERNAME: str = ""
     BOOTSTRAP_ADMIN_PASSWORD: str = ""
+
+    # 开发环境可由应用自动迁移；生产环境由独立 migrate 容器执行。
+    RUN_MIGRATIONS_ON_STARTUP: bool = True
+    SCHEDULER_ENABLED: bool = True
+    SCHEDULER_TIMEZONE: str = "Asia/Shanghai"
 
     # LLM 配置
     LLM_PROVIDER: str = "anthropic"  # anthropic / openai

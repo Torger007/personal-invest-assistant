@@ -14,6 +14,7 @@ from app.services.data_collector.akshare_source import AkShareSource
 from app.services.data_collector.storage import DataStorage
 from app.portfolio import get_portfolio_info
 from app.models.user import User
+from app.config import settings
 from sqlalchemy import select
 
 
@@ -123,7 +124,12 @@ def setup_scheduler():
     # 每个交易日16:30收盘后批量更新，周一至周五
     scheduler.add_job(
         daily_data_update,
-        CronTrigger(day_of_week="mon-fri", hour=16, minute=30),
+        CronTrigger(
+            day_of_week="mon-fri",
+            hour=16,
+            minute=30,
+            timezone=settings.SCHEDULER_TIMEZONE,
+        ),
         id="daily_update",
         replace_existing=True
     )
