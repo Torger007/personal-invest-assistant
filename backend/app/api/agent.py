@@ -6,13 +6,16 @@ import json
 import time
 from typing import Any, AsyncIterator
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from app.agent.service import agent_service
 from app.agent.task_manager import agent_task_manager
+from app.auth import get_current_user
+from app.models.user import User
 
 router = APIRouter(prefix="/agent", tags=["Agent"])
+_task_owners: dict[str, str] = {}
 
 
 class ChatRequest(BaseModel):
@@ -21,18 +24,19 @@ class ChatRequest(BaseModel):
 
 
 @router.post("/analyze")
-async def trigger_analysis():
+async def trigger_analysis(user: User = Depends(get_current_user)):
     """Start autonomous analysis in the background and return its task ID."""
-    task = agent_task_manager.start(agent_service.stream_portfolio_analysis())
+    task = agent_task_manager.start(agent_service.stream_portfolio_analysis(user.id))
+    _task_owners[task.task_id] = user.id
     return {"status": "started", "task_id": task.task_id}
 
 
 @router.post("/chat")
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, user: User = Depends(get_current_user)):
     """Stream tool progress and answer tokens for an interactive question."""
     async def events():
         async for event in _events_with_generation_status(
-            agent_service.stream_question(request.question, request.conversation_id)
+            agent_service.stream_question(request.question, user.id, request.conversation_id)
         ):
             yield _encode_sse(event)
         yield "event: close\ndata: {}\n\n"
@@ -45,43 +49,45 @@ async def chat(request: ChatRequest):
 
 
 @router.post("/conversations")
-async def create_conversation():
+async def create_conversation(user: User = Depends(get_current_user)):
     """Create an empty interactive conversation."""
-    return await agent_service.create_conversation()
+    return await agent_service.create_conversation(user.id)
 
 
 @router.get("/conversations")
-async def list_conversations(limit: int = 30):
-    return {"conversations": await agent_service.list_conversations(limit)}
+async def list_conversations(limit: int = 30, user: User = Depends(get_current_user)):
+    return {"conversations": await agent_service.list_conversations(user.id, limit)}
 
 
 @router.get("/conversations/{conversation_id}")
-async def get_conversation(conversation_id: str):
+async def get_conversation(conversation_id: str, user: User = Depends(get_current_user)):
     try:
-        return await agent_service.get_conversation(conversation_id)
+        return await agent_service.get_conversation(user.id, conversation_id)
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @router.post("/conversations/{conversation_id}/archive")
-async def archive_conversation(conversation_id: str):
+async def archive_conversation(conversation_id: str, user: User = Depends(get_current_user)):
     try:
-        await agent_service.archive_conversation(conversation_id)
+        await agent_service.archive_conversation(user.id, conversation_id)
         return {"status": "archived"}
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @router.get("/reports/{analysis_id}")
-async def get_analysis_report(analysis_id: int):
+async def get_analysis_report(analysis_id: int, user: User = Depends(get_current_user)):
     try:
-        return await agent_service.get_analysis_report(analysis_id)
+        return await agent_service.get_analysis_report(user.id, analysis_id)
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @router.get("/analyze/{task_id}")
-async def get_analysis_task(task_id: str):
+async def get_analysis_task(task_id: str, user: User = Depends(get_current_user)):
+    if _task_owners.get(task_id) != user.id:
+        raise HTTPException(status_code=404, detail="Task not found")
     task = agent_task_manager.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在或已过期")
@@ -96,7 +102,9 @@ async def get_analysis_task(task_id: str):
 
 
 @router.get("/analyze/{task_id}/events")
-async def stream_analysis_task(task_id: str):
+async def stream_analysis_task(task_id: str, user: User = Depends(get_current_user)):
+    if _task_owners.get(task_id) != user.id:
+        raise HTTPException(status_code=404, detail="Task not found")
     task = agent_task_manager.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在或已过期")
@@ -139,10 +147,10 @@ async def stream_analysis_task(task_id: str):
 
 
 @router.get("/history")
-async def get_history(limit: int = 10):
+async def get_history(limit: int = 10, user: User = Depends(get_current_user)):
     """获取分析历史"""
     try:
-        history = await agent_service.get_latest_analysis(limit)
+        history = await agent_service.get_latest_analysis(user.id, limit)
         return {
             "status": "success",
             "history": history

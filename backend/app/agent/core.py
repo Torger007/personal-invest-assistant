@@ -23,11 +23,12 @@ MAX_ITERATIONS = 15
 class AgentCore:
     """Agent 核心"""
 
-    def __init__(self):
+    def __init__(self, user_id: str | None = None):
         self.llm = create_provider()
         self.tools = tool_registry
         self.conversation: List[Dict[str, Any]] = []
         self.execution_trace: Dict[str, Any] = {}
+        self.user_id = user_id
 
     async def run(self, user_input: str, system_prompt: str | None = None) -> str:
         """
@@ -74,7 +75,7 @@ class AgentCore:
                 # 执行所有工具调用
                 for tool_call in response.tool_calls:
                     logger.info(f"[Agent] 调用工具: {tool_call.name} 参数: {tool_call.arguments}")
-                    result = await self.tools.execute(tool_call.name, tool_call.arguments)
+                    result = await self.tools.execute(tool_call.name, tool_call.arguments, self.user_id)
                     logger.info(f"[Agent] 工具 {tool_call.name} 返回: {result.get('status')}")
 
                     # 添加标准 tool result 消息
@@ -123,7 +124,7 @@ class AgentCore:
             arguments = self._resolve_arguments(step.arguments, result_by_tool)
             logger.info("[Agent] planned tool: %s args: %s", step.tool_name, arguments)
             tool_start = time.perf_counter()
-            result = await self.tools.execute(step.tool_name, arguments)
+            result = await self.tools.execute(step.tool_name, arguments, self.user_id)
             duration_ms = round((time.perf_counter() - tool_start) * 1000)
             result_by_tool[step.tool_name] = result
             tool_result = {"tool_name": step.tool_name, "arguments": arguments, "result": result}
@@ -169,7 +170,7 @@ class AgentCore:
             arguments = self._resolve_arguments(step.arguments, result_by_tool)
             yield {"type": "tool_started", "name": step.tool_name, "args": self._json_safe(step.arguments)}
             tool_start = time.perf_counter()
-            result = await self.tools.execute(step.tool_name, arguments)
+            result = await self.tools.execute(step.tool_name, arguments, self.user_id)
             duration_ms = round((time.perf_counter() - tool_start) * 1000)
             result_by_tool[step.tool_name] = result
             tool_result = {"tool_name": step.tool_name, "arguments": arguments, "result": result}

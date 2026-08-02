@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 from app.agent.core import AgentCore
 from app.agent.planner import AgentPlanner
 from app.agent.prompt_loader import get_agent_system_prompt, render_agent_prompt
-from app.portfolio import get_portfolio_codes, get_portfolio_info
+from app.services.portfolio_service import get_user_portfolio
 from app.models.agent import AgentAnalysis, AgentConversation, AgentMessage
 from app.utils.db import AsyncSessionLocal
 
@@ -31,20 +31,20 @@ class AgentService:
     def __init__(self):
         self.planner = AgentPlanner()
 
-    async def analyze_portfolio(self) -> str:
+    async def analyze_portfolio(self, user_id: str) -> str:
         """自主分析模式：分析用户持仓基金，生成投资建议。
 
         Returns:
             str: 分析报告
         """
-        async for event in self.stream_portfolio_analysis():
+        async for event in self.stream_portfolio_analysis(user_id):
             if event["type"] == "complete":
                 return event["answer"]
             if event["type"] == "error":
                 raise RuntimeError(event["message"])
         raise RuntimeError("组合分析未生成结果")
 
-    async def ask_question(self, question: str, conversation_id: str | None = None) -> str:
+    async def ask_question(self, question: str, user_id: str, conversation_id: str | None = None) -> str:
         """问答交互模式：回答用户投资问题。
 
         Args:
@@ -53,7 +53,7 @@ class AgentService:
         Returns:
             str: Agent 回答
         """
-        async for event in self.stream_question(question, conversation_id):
+        async for event in self.stream_question(question, user_id, conversation_id):
             if event["type"] == "complete":
                 return event["answer"]
             if event["type"] == "error":
@@ -61,11 +61,11 @@ class AgentService:
         raise RuntimeError("问答未生成结果")
 
     async def stream_question(
-        self, question: str, conversation_id: str | None = None,
+        self, question: str, user_id: str, conversation_id: str | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream a question's tool progress and generated answer."""
         conversation, active_context, prior_messages = await self._prepare_conversation(
-            question, conversation_id,
+            question, user_id, conversation_id,
         )
         yield {
             "type": "conversation",
@@ -73,7 +73,8 @@ class AgentService:
             "title": conversation.title,
         }
 
-        portfolio_codes = get_portfolio_codes()
+        async with AsyncSessionLocal() as session:
+            portfolio_codes = [fund["code"] for fund in await get_user_portfolio(session, user_id)]
         prompt = render_agent_prompt(
             "interactive_question",
             portfolio_codes=", ".join(portfolio_codes),
@@ -88,12 +89,14 @@ class AgentService:
             prompt=prompt,
             plan=plan,
             trace_question=question,
+            user_id=user_id,
         ):
             if event["type"] == "complete":
                 event["conversation_id"] = conversation.id
                 try:
                     message = await self._save_assistant_message(
                         conversation.id,
+                        user_id,
                         question,
                         event["answer"],
                         plan,
@@ -105,9 +108,10 @@ class AgentService:
                     event["persistence_error"] = True
             yield event
 
-    async def stream_portfolio_analysis(self) -> AsyncIterator[dict[str, Any]]:
+    async def stream_portfolio_analysis(self, user_id: str) -> AsyncIterator[dict[str, Any]]:
         """Stream the autonomous portfolio analysis for a background task."""
-        portfolio = get_portfolio_info()
+        async with AsyncSessionLocal() as session:
+            portfolio = await get_user_portfolio(session, user_id)
         portfolio_str = "\n".join(
             f"- {fund['code']} ({fund['name']}): 权重 {fund['weight'] * 100:.0f}%"
             for fund in portfolio
@@ -117,6 +121,7 @@ class AgentService:
             analysis_type="autonomous",
             prompt=prompt,
             plan=self.planner.plan_portfolio_analysis(),
+            user_id=user_id,
             trace_question="组合自主分析",
         ):
             yield event
@@ -127,8 +132,9 @@ class AgentService:
         prompt: str,
         plan,
         trace_question: str,
+        user_id: str,
     ) -> AsyncIterator[dict[str, Any]]:
-        core = AgentCore()
+        core = AgentCore(user_id=user_id)
         start_time = time.time()
         try:
             async for event in core.stream_planned(
@@ -144,6 +150,7 @@ class AgentService:
                         execution_record=core.get_execution_trace(),
                         summary=event["answer"],
                         duration_seconds=int(time.time() - start_time),
+                        user_id=user_id,
                     )
                 yield event
         except Exception as e:
@@ -151,12 +158,14 @@ class AgentService:
             yield {"type": "error", "message": str(e)}
 
     async def _prepare_conversation(
-        self, question: str, conversation_id: str | None,
+        self, question: str, user_id: str, conversation_id: str | None,
     ) -> tuple[AgentConversation, dict[str, Any], list[AgentMessage]]:
         """Create or load a conversation and persist its incoming user message."""
         async with AsyncSessionLocal() as session:
             if conversation_id:
                 conversation = await session.get(AgentConversation, conversation_id)
+                if conversation and conversation.user_id != user_id:
+                    conversation = None
                 if not conversation or conversation.archived_at:
                     raise ValueError("会话不存在或已归档")
             else:
@@ -164,6 +173,7 @@ class AgentService:
                     id=str(uuid4()),
                     title=self._make_title(question),
                     active_context={},
+                    user_id=user_id,
                 )
                 session.add(conversation)
                 await session.flush()
@@ -190,6 +200,7 @@ class AgentService:
     async def _save_assistant_message(
         self,
         conversation_id: str,
+        user_id: str,
         question: str,
         answer: str,
         plan,
@@ -198,7 +209,7 @@ class AgentService:
         """Persist the answer and update context used by deterministic follow-ups."""
         async with AsyncSessionLocal() as session:
             conversation = await session.get(AgentConversation, conversation_id)
-            if not conversation:
+            if not conversation or conversation.user_id != user_id:
                 raise ValueError("会话不存在")
             message = AgentMessage(
                 conversation_id=conversation_id,
@@ -224,20 +235,22 @@ class AgentService:
             await session.refresh(message)
             return message
 
-    async def create_conversation(self) -> dict:
+    async def create_conversation(self, user_id: str) -> dict:
         async with AsyncSessionLocal() as session:
             conversation = AgentConversation(
                 id=str(uuid4()), title="新对话", active_context={},
             )
+            conversation.user_id = user_id
             session.add(conversation)
             await session.commit()
             return self._conversation_to_dict(conversation, 0)
 
-    async def list_conversations(self, limit: int = 30) -> list[dict]:
+    async def list_conversations(self, user_id: str, limit: int = 30) -> list[dict]:
         limit = max(1, min(limit, 100))
         async with AsyncSessionLocal() as session:
             await session.execute(
                 AgentConversation.__table__.update()
+                .where(AgentConversation.user_id == user_id)
                 .where(AgentConversation.archived_at.is_(None))
                 .where(AgentConversation.last_message_at < datetime.now() - timedelta(days=ARCHIVE_AFTER_DAYS))
                 .values(archived_at=datetime.now(), updated_at=datetime.now())
@@ -245,6 +258,7 @@ class AgentService:
             await session.commit()
             conversations = list((await session.execute(
                 select(AgentConversation)
+                .where(AgentConversation.user_id == user_id)
                 .where(AgentConversation.archived_at.is_(None))
                 .order_by(AgentConversation.last_message_at.desc())
                 .limit(limit)
@@ -256,10 +270,10 @@ class AgentService:
                 )) or 0,
             ) for conversation in conversations]
 
-    async def get_conversation(self, conversation_id: str) -> dict:
+    async def get_conversation(self, user_id: str, conversation_id: str) -> dict:
         async with AsyncSessionLocal() as session:
             conversation = await session.get(AgentConversation, conversation_id)
-            if not conversation:
+            if not conversation or conversation.user_id != user_id:
                 raise ValueError("会话不存在")
             messages = list((await session.execute(
                 select(AgentMessage)
@@ -271,19 +285,19 @@ class AgentService:
                 "messages": [self._message_to_dict(message) for message in messages],
             }
 
-    async def archive_conversation(self, conversation_id: str) -> None:
+    async def archive_conversation(self, user_id: str, conversation_id: str) -> None:
         async with AsyncSessionLocal() as session:
             conversation = await session.get(AgentConversation, conversation_id)
-            if not conversation:
+            if not conversation or conversation.user_id != user_id:
                 raise ValueError("会话不存在")
             conversation.archived_at = datetime.now()
             conversation.updated_at = datetime.now()
             await session.commit()
 
-    async def get_analysis_report(self, analysis_id: int) -> dict:
+    async def get_analysis_report(self, user_id: str, analysis_id: int) -> dict:
         async with AsyncSessionLocal() as session:
             analysis = await session.get(AgentAnalysis, analysis_id)
-            if not analysis:
+            if not analysis or analysis.user_id != user_id:
                 raise ValueError("报告不存在")
             return {
                 "id": analysis.id,
@@ -354,13 +368,15 @@ class AgentService:
         analysis_type: str,
         execution_record: dict,
         summary: str,
-        duration_seconds: int
+        duration_seconds: int,
+        user_id: str,
     ) -> int | None:
         """保存分析历史到数据库"""
         try:
             provider_info = core.get_provider_info()
             async with AsyncSessionLocal() as session:
                 analysis = AgentAnalysis(
+                    user_id=user_id,
                     analysis_type=analysis_type,
                     tool_calls=execution_record,
                     summary=summary,
@@ -376,11 +392,12 @@ class AgentService:
             logger.error(f"[Agent] 保存分析历史失败: {e}")
             return None
 
-    async def get_latest_analysis(self, limit: int = 10) -> list:
+    async def get_latest_analysis(self, user_id: str, limit: int = 10) -> list:
         """获取最新的分析历史"""
         async with AsyncSessionLocal() as session:
             result = await session.execute(
                 select(AgentAnalysis)
+                .where(AgentAnalysis.user_id == user_id)
                 .order_by(AgentAnalysis.created_at.desc())
                 .limit(limit)
             )

@@ -2,8 +2,28 @@ import axios from 'axios'
 
 const api = axios.create({
   baseURL: '/api',
+  withCredentials: true,
   timeout: 120000  // 2分钟超时，Agent 分析可能需要较长时间
 })
+
+function getCookie(name) {
+  const prefix = `${name}=`
+  return document.cookie.split('; ').find(row => row.startsWith(prefix))?.slice(prefix.length)
+}
+
+api.interceptors.request.use(config => {
+  if (!['get', 'head', 'options'].includes((config.method || 'get').toLowerCase())) {
+    const csrf = getCookie('invest_csrf')
+    if (csrf) config.headers['X-CSRF-Token'] = csrf
+  }
+  return config
+})
+
+export const authApi = {
+  login: (username, password) => api.post('/auth/login', { username, password }),
+  logout: () => api.post('/auth/logout'),
+  me: () => api.get('/auth/me')
+}
 
 // 市场相关
 export const marketApi = {
@@ -54,7 +74,8 @@ export const agentApi = {
     }
     return readSseResponse('/api/agent/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCookie('invest_csrf') || '' },
+      credentials: 'include',
       body: JSON.stringify({ question, conversation_id: conversationId || null })
     }, onEvent)
   },

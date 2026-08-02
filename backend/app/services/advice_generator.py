@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AdviceRecord
 from app.models.market import IndexDaily, FundFlow
-from app.portfolio import get_portfolio_codes, get_portfolio_weights
+from app.services.portfolio_service import get_user_portfolio
 from app.services.advice_service import advice_service
 from app.services.data_collector.storage import DataStorage
 
@@ -156,7 +156,7 @@ async def generate_advice_for_fund(
 
 
 async def save_advice_record(
-    fund_code: str, result: dict, db: AsyncSession
+    fund_code: str, result: dict, db: AsyncSession, user_id: str
 ) -> AdviceRecord:
     """将分析结果持久化到 advice_records 表
 
@@ -168,6 +168,7 @@ async def save_advice_record(
     stmt = select(AdviceRecord).where(
         AdviceRecord.fund_code == fund_code,
         AdviceRecord.date == today,
+        AdviceRecord.user_id == user_id,
     )
     existing = (await db.execute(stmt)).scalar_one_or_none()
 
@@ -189,6 +190,7 @@ async def save_advice_record(
         record = existing
     else:
         record = AdviceRecord(
+            user_id=user_id,
             fund_code=fund_code,
             date=today,
             overall_signal=result.get("overall_signal"),
@@ -205,7 +207,7 @@ async def save_advice_record(
     return record
 
 
-async def generate_advice_for_portfolio(db: AsyncSession) -> List[str]:
+async def generate_advice_for_portfolio(db: AsyncSession, user_id: str) -> List[str]:
     """遍历组合中所有基金，逐只生成建议
 
     Args:
@@ -219,8 +221,9 @@ async def generate_advice_for_portfolio(db: AsyncSession) -> List[str]:
     turnover = await get_market_turnover(db)
     main_flow, north_flow = await get_fund_flow_data(db)
 
-    codes = get_portfolio_codes()
-    weights = get_portfolio_weights()
+    portfolio = await get_user_portfolio(db, user_id)
+    codes = [fund["code"] for fund in portfolio]
+    weights = {fund["code"]: fund["weight"] for fund in portfolio}
     processed = []
 
     for code in codes:
@@ -235,7 +238,7 @@ async def generate_advice_for_portfolio(db: AsyncSession) -> List[str]:
                 main_flow=main_flow,
                 north_flow=north_flow,
             )
-            await save_advice_record(code, result, db)
+            await save_advice_record(code, result, db, user_id)
             processed.append(code)
             logger.info(
                 "[建议生成] %s → %s (置信度 %.0f%%)",

@@ -26,7 +26,7 @@ class ToolRegistry:
         """获取所有已注册的工具名称"""
         return [tool["name"] for tool in self.tools]
 
-    async def execute(self, tool_name: str, tool_input: dict) -> dict:
+    async def execute(self, tool_name: str, tool_input: dict, user_id: str | None = None) -> dict:
         """
         执行指定工具
 
@@ -45,7 +45,7 @@ class ToolRegistry:
             }
 
         # 执行工具
-        return await execute_tool(tool_name, tool_input)
+        return await execute_tool(tool_name, tool_input, user_id)
 
 
 # 全局单例

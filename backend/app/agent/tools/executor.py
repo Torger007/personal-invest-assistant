@@ -15,7 +15,8 @@ from sqlalchemy import select
 from app.models import AdviceRecord
 from app.models.agent import AgentAnalysis
 from app.models.fund import Fund
-from app.portfolio import get_portfolio_info, get_portfolio_codes
+from app.services.portfolio_service import get_user_portfolio
+from app.portfolio import get_portfolio_codes, get_portfolio_info
 from app.services.advice_generator import generate_advice_for_portfolio
 from app.services.analyzer.sector import SectorAnalyzer
 from app.services.data_collector.akshare_source import AkShareSource
@@ -24,7 +25,7 @@ from app.services.analyzer.technical import TechnicalAnalyzer
 from app.utils.db import AsyncSessionLocal
 
 
-async def execute_tool(tool_name: str, tool_input: dict) -> dict:
+async def execute_tool(tool_name: str, tool_input: dict, user_id: str | None = None) -> dict:
     """
     执行指定工具
 
@@ -52,13 +53,13 @@ async def execute_tool(tool_name: str, tool_input: dict) -> dict:
             return await _execute_get_fund_flow(tool_input)
 
         elif tool_name == "get_portfolio":
-            return await _execute_get_portfolio(tool_input)
+            return await _execute_get_portfolio(tool_input, user_id)
 
         elif tool_name == "get_latest_advice":
-            return await _execute_get_latest_advice(tool_input)
+            return await _execute_get_latest_advice(tool_input, user_id)
 
         elif tool_name == "generate_advice":
-            return await _execute_generate_advice(tool_input)
+            return await _execute_generate_advice(tool_input, user_id)
 
         elif tool_name == "get_market_overview":
             return await _execute_get_market_overview(tool_input)
@@ -70,7 +71,7 @@ async def execute_tool(tool_name: str, tool_input: dict) -> dict:
             return await _execute_compare_funds(tool_input)
 
         elif tool_name == "get_analysis_history":
-            return await _execute_get_analysis_history(tool_input)
+            return await _execute_get_analysis_history(tool_input, user_id)
 
         else:
             return {
@@ -100,9 +101,12 @@ async def _execute_get_index_data(tool_input: dict) -> dict:
     }
 
 
-async def _execute_get_portfolio(tool_input: dict) -> dict:
+async def _execute_get_portfolio(tool_input: dict, user_id: str | None) -> dict:
     """读取用户当前持仓配置。"""
-    portfolio = get_portfolio_info()
+    if not user_id:
+        return {"status": "error", "error": "Missing user context"}
+    async with AsyncSessionLocal() as session:
+        portfolio = await get_user_portfolio(session, user_id)
     total_weight = sum(float(fund.get("weight") or 0) for fund in portfolio)
 
     return {
@@ -116,15 +120,17 @@ async def _execute_get_portfolio(tool_input: dict) -> dict:
     }
 
 
-async def _execute_get_latest_advice(tool_input: dict) -> dict:
+async def _execute_get_latest_advice(tool_input: dict, user_id: str | None) -> dict:
     """读取最新结构化建议。"""
     fund_code = tool_input.get("fund_code")
     limit = int(tool_input.get("limit", 1) or 1)
     limit = max(1, min(limit, 20))
 
+    if not user_id:
+        return {"status": "error", "error": "Missing user context"}
     async with AsyncSessionLocal() as session:
         if fund_code:
-            records = await _fetch_advice_records(session, fund_code=fund_code, limit=limit)
+            records = await _fetch_advice_records(session, fund_code=fund_code, limit=limit, user_id=user_id)
             return {
                 "status": "success",
                 "data": {
@@ -135,11 +141,11 @@ async def _execute_get_latest_advice(tool_input: dict) -> dict:
                 "message": None if records else "暂无建议记录，请先调用 generate_advice 生成",
             }
 
-        portfolio = get_portfolio_info()
+        portfolio = await get_user_portfolio(session, user_id)
         portfolio_map = {fund["code"]: fund for fund in portfolio}
         advice = []
         for code in portfolio_map:
-            records = await _fetch_advice_records(session, fund_code=code, limit=1)
+            records = await _fetch_advice_records(session, fund_code=code, limit=1, user_id=user_id)
             record = records[0] if records else None
             advice.append({
                 "fund_code": code,
@@ -160,10 +166,12 @@ async def _execute_get_latest_advice(tool_input: dict) -> dict:
         }
 
 
-async def _execute_generate_advice(tool_input: dict) -> dict:
+async def _execute_generate_advice(tool_input: dict, user_id: str | None) -> dict:
     """触发 deterministic 建议生成器。"""
+    if not user_id:
+        return {"status": "error", "error": "Missing user context"}
     async with AsyncSessionLocal() as session:
-        codes = await generate_advice_for_portfolio(session)
+        codes = await generate_advice_for_portfolio(session, user_id)
 
     return {
         "status": "success",
@@ -335,7 +343,7 @@ async def _execute_compare_funds(tool_input: dict) -> dict:
     }
 
 
-async def _execute_get_analysis_history(tool_input: dict) -> dict:
+async def _execute_get_analysis_history(tool_input: dict, user_id: str | None) -> dict:
     """读取 Agent 历史分析记录。"""
     analysis_type = tool_input.get("analysis_type")
     limit = int(tool_input.get("limit", 5) or 5)
@@ -348,11 +356,12 @@ async def _execute_get_analysis_history(tool_input: dict) -> dict:
         }
 
     async with AsyncSessionLocal() as session:
-        stmt = select(AgentAnalysis).order_by(AgentAnalysis.created_at.desc()).limit(limit)
+        stmt = select(AgentAnalysis).where(AgentAnalysis.user_id == user_id).order_by(AgentAnalysis.created_at.desc()).limit(limit)
         if analysis_type:
             stmt = (
                 select(AgentAnalysis)
                 .where(AgentAnalysis.analysis_type == analysis_type)
+                .where(AgentAnalysis.user_id == user_id)
                 .order_by(AgentAnalysis.created_at.desc())
                 .limit(limit)
             )
@@ -379,10 +388,11 @@ async def _execute_get_analysis_history(tool_input: dict) -> dict:
     }
 
 
-async def _fetch_advice_records(session, fund_code: str, limit: int) -> list[AdviceRecord]:
+async def _fetch_advice_records(session, fund_code: str, limit: int, user_id: str | None = None) -> list[AdviceRecord]:
     result = await session.execute(
         select(AdviceRecord)
         .where(AdviceRecord.fund_code == fund_code)
+        .where(AdviceRecord.user_id == user_id)
         .order_by(AdviceRecord.date.desc(), AdviceRecord.created_at.desc())
         .limit(limit)
     )

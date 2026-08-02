@@ -1,6 +1,13 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { authApi } from '../api'
 
 const routes = [
+  {
+    path: '/login',
+    name: 'Login',
+    component: () => import('../views/LoginView.vue'),
+    meta: { public: true }
+  },
   {
     path: '/',
     name: 'MarketOverview',
@@ -36,6 +43,16 @@ const routes = [
 const router = createRouter({
   history: createWebHistory(),
   routes
+})
+
+router.beforeEach(async to => {
+  if (to.meta.public) return true
+  try {
+    await authApi.me()
+    return true
+  } catch {
+    return { name: 'Login', query: { redirect: to.fullPath } }
+  }
 })
 
 export default router

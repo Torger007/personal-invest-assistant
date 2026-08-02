@@ -17,6 +17,15 @@ class Settings(BaseSettings):
     # API配置
     API_PREFIX: str = "/api"
 
+    # Set the bootstrap values once to provision the first administrator.
+    SESSION_COOKIE_NAME: str = "invest_session"
+    CSRF_COOKIE_NAME: str = "invest_csrf"
+    SESSION_DAYS: int = 14
+    SESSION_SECURE: bool = False
+    CORS_ORIGINS: str = "http://localhost:3001,http://127.0.0.1:3001"
+    BOOTSTRAP_ADMIN_USERNAME: str = ""
+    BOOTSTRAP_ADMIN_PASSWORD: str = ""
+
     # LLM 配置
     LLM_PROVIDER: str = "anthropic"  # anthropic / openai
     ANTHROPIC_API_KEY: str = ""

@@ -38,3 +38,4 @@ PyYAML
 pytest
 pytest-asyncio
 aiosqlite
+argon2-cffi

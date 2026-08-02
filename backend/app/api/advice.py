@@ -4,7 +4,9 @@ from sqlalchemy import select, desc
 from app.utils.db import get_db
 from app.models import AdviceRecord
 from app.models.market import FundFlow
-from app.portfolio import get_portfolio_codes, get_portfolio_info
+from app.auth import get_current_user
+from app.models.user import User
+from app.services.portfolio_service import get_user_portfolio
 from app.services.advice_generator import generate_advice_for_portfolio
 import json
 
@@ -43,21 +45,22 @@ def _record_to_brief(r):
 
 
 @router.get("/")
-async def get_advice_list(db: AsyncSession = Depends(get_db)):
+async def get_advice_list(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     """获取建议列表"""
     result = await db.execute(
-        select(AdviceRecord).order_by(AdviceRecord.date.desc()).limit(20)
+        select(AdviceRecord).where(AdviceRecord.user_id == user.id).order_by(AdviceRecord.date.desc()).limit(20)
     )
     records = result.scalars().all()
     return {"advice": [_record_to_brief(r) for r in records]}
 
 
 @router.get("/{fund_code}")
-async def get_fund_advice(fund_code: str, db: AsyncSession = Depends(get_db)):
+async def get_fund_advice(fund_code: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     """获取单只基金的投资建议详情"""
     result = await db.execute(
         select(AdviceRecord)
         .where(AdviceRecord.fund_code == fund_code)
+        .where(AdviceRecord.user_id == user.id)
         .order_by(AdviceRecord.date.desc())
         .limit(1)
     )
@@ -88,10 +91,11 @@ async def get_fund_advice(fund_code: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/portfolio")
-async def get_portfolio_advice(db: AsyncSession = Depends(get_db)):
+async def get_portfolio_advice(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     """获取组合整体概览：每只基金最新建议 + 聚合统计"""
-    codes = get_portfolio_codes()
-    portfolio_info = {f["code"]: f for f in get_portfolio_info()}
+    portfolio = await get_user_portfolio(db, user.id)
+    codes = [f["code"] for f in portfolio]
+    portfolio_info = {f["code"]: f for f in portfolio}
     funds = []
 
     total_confidence = 0.0
@@ -103,6 +107,7 @@ async def get_portfolio_advice(db: AsyncSession = Depends(get_db)):
         result = await db.execute(
             select(AdviceRecord)
             .where(AdviceRecord.fund_code == code)
+            .where(AdviceRecord.user_id == user.id)
             .order_by(AdviceRecord.date.desc())
             .limit(1)
         )
@@ -174,11 +179,13 @@ async def get_fund_history(
     fund_code: str,
     limit: int = Query(30, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """获取单只基金的历史建议序列"""
     result = await db.execute(
         select(AdviceRecord)
         .where(AdviceRecord.fund_code == fund_code)
+        .where(AdviceRecord.user_id == user.id)
         .order_by(AdviceRecord.date.desc())
         .limit(limit)
     )
@@ -201,16 +208,18 @@ async def get_fund_history(
 
 
 @router.get("/compare")
-async def compare_advice(db: AsyncSession = Depends(get_db)):
+async def compare_advice(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     """多基金横向对比（最新建议 + 完整详情）"""
-    codes = get_portfolio_codes()
-    portfolio_info = {f["code"]: f for f in get_portfolio_info()}
+    portfolio = await get_user_portfolio(db, user.id)
+    codes = [f["code"] for f in portfolio]
+    portfolio_info = {f["code"]: f for f in portfolio}
     funds = []
 
     for code in codes:
         result = await db.execute(
             select(AdviceRecord)
             .where(AdviceRecord.fund_code == code)
+            .where(AdviceRecord.user_id == user.id)
             .order_by(AdviceRecord.date.desc())
             .limit(1)
         )
@@ -251,10 +260,10 @@ async def compare_advice(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/generate")
-async def trigger_generate(db: AsyncSession = Depends(get_db)):
+async def trigger_generate(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     """手动触发建议生成"""
     try:
-        codes = await generate_advice_for_portfolio(db)
+        codes = await generate_advice_for_portfolio(db, user.id)
         return {
             "status": "success",
             "message": f"建议生成完成，共处理 {len(codes)} 只基金",

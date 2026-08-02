@@ -57,6 +57,7 @@
           </el-button>
         </el-tooltip>
 
+        <el-button text @click="logout">退出</el-button>
         <el-button type="primary" @click="drawerVisible = true" class="ask-ai-btn">
           <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
@@ -307,9 +308,12 @@
 
 <script setup>
 import { ref, nextTick, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
-import { agentApi } from './api'
+import { agentApi, authApi } from './api'
+
+const router = useRouter()
 
 const drawerVisible = ref(false)
 const question = ref('')
@@ -384,6 +388,14 @@ const sendQuestion = async () => {
     asking.value = false
     loadConversations()
     scrollToBottom()
+  }
+}
+
+const logout = async () => {
+  try {
+    await authApi.logout()
+  } finally {
+    router.replace('/login')
   }
 }
 

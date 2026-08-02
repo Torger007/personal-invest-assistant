@@ -13,6 +13,8 @@ from app.utils.db import AsyncSessionLocal
 from app.services.data_collector.akshare_source import AkShareSource
 from app.services.data_collector.storage import DataStorage
 from app.portfolio import get_portfolio_info
+from app.models.user import User
+from sqlalchemy import select
 
 
 scheduler = AsyncIOScheduler()
@@ -98,7 +100,9 @@ async def daily_data_update():
             print("[调度器] 5/5 生成投资建议...")
             try:
                 from app.services.advice_generator import generate_advice_for_portfolio
-                codes = await generate_advice_for_portfolio(session)
+                codes = []
+                for user in (await session.execute(select(User).where(User.is_active.is_(True)))).scalars():
+                    codes.extend(await generate_advice_for_portfolio(session, user.id))
                 print(f"  {len(codes)} 只基金建议已生成")
             except Exception as e:
                 print(f"[调度器] 建议生成失败: {e}")
