@@ -1,170 +1,154 @@
 # 个人投资助手
 
-一个轻量化的个人投资分析助手系统，帮助用户分析市场、判断板块走势，给出加仓/止盈建议。
+一个面向 A 股基金分析的全栈 Web 应用。系统采集公开市场数据，提供市场、基金与板块分析，生成结构化投资建议，并通过 AI 助手支持基于工具调用的问答。
 
-## 核心功能
+> 状态：**可演示、可容器化部署的 MVP**（截至 2026-08-02）。核心闭环已经完成；生产稳定性、自动化测试和可观测性仍需补齐。
 
-- **市场概览**：实时掌握大盘指数（上证、深证、创业板）点位与涨跌幅，跟踪北向资金、主力资金流向
-- **基金分析**：多维度分析基金表现（技术面、估值、资金流向、情绪）
-- **板块走势**：分析行业/概念板块轮动趋势，支持查看板块 K 线图
-- **智能建议**：基于多维度分析，给出加仓/持有/减仓建议及仓位比例，附完整证据链与置信度
-- **AI 问答**：支持自然语言查询基金信息、市场分析，对接 OpenAI/Anthropic
+## 当前进度
 
-## 核心特色
+| 领域 | 进度 | 已实现内容 |
+| --- | --- | --- |
+| 市场数据与采集 | 已完成 | 基于 AKShare 采集指数、资金流、基金净值和概念/行业板块；支持手动刷新与工作日 16:30 定时刷新。 |
+| 市场与基金界面 | 已完成 | 市场概览、基金列表、基金详情（净值走势和收益计算）、板块走势及 K 线图。 |
+| 投资建议 | 已完成 | 技术面、估值、资金流、情绪和板块等多维分析；支持单基金、组合建议、建议历史与对比。 |
+| AI 助手 | 已完成 | OpenAI/Anthropic Provider 适配、标准工具调用、问题规划、SSE 流式输出、执行进度和历史会话。 |
+| 用户与权限 | 已完成 | 登录页、服务端会话、HttpOnly Cookie、CSRF 校验、登录限流；数据和会话按用户隔离，刷新任务限管理员调用。 |
+| 部署 | 已完成 | Docker Compose 编排 PostgreSQL、数据库迁移、FastAPI 和 Nginx；仅对外暴露前端端口。 |
+| 前端构建 | 已验证 | `npm run build` 于 2026-08-02 成功完成。 |
+| 后端自动化测试 | 部分通过 | 已有数据存储、Agent 规划、SSE 和任务管理测试；2026-08-02 在锁定依赖环境中执行结果为 13 通过、3 失败。 |
 
-### 可信的建议系统
+## 已知缺口与下一步
 
-每个建议都有完整的证据链：
-- 多维度独立分析（技术、估值、资金、情绪）
-- 信号一致性检验（各维度是否达成共识）
-- 环境适应性调整（根据市场环境动态调整权重）
-- 明确的置信度评估和风险提示
+1. 修复鉴权改造后失效的 3 个 Agent/SSE 测试夹具：直接调用路由时未传入用户，且以 `__new__` 构造 `AgentCore` 的测试未设置 `user_id`。
+2. 为登录、鉴权、数据采集、建议生成和容器启动补充集成测试，并接入 CI。
+3. 提供持仓的新增、编辑、删除界面和 API。目前只会为首次登录用户写入预置持仓，尚未提供自助管理功能。
+4. 将进程内的手动刷新状态改为持久化任务队列，并增加采集失败告警、日志聚合、指标和备份策略。
+5. 扩充技术指标与数据质量校验，并处理 AKShare/上游公开数据源的可用性、限流和反爬变化。
+6. 优化前端产物拆包。当前生产构建通过，但存在超过 500 kB 的 chunk 警告。
 
-### 多数据源整合
+## 功能概览
 
-通过 [AKShare](https://github.com/akfamily/akshare) 统一接入多个财经数据渠道，确保信息全面准确：
-- 指数行情（上证、深证、创业板、沪深300、中证500）
-- 资金流向（北向资金、主力资金）
-- 基金净值与基本信息
-- 板块数据（概念/行业板块涨跌排行）
-- 更多数据持续接入中
+- **市场概览**：主要指数、北向/主力资金流、行业与概念板块数据。
+- **基金分析**：基金列表、历史净值、收益计算、技术与估值等多维分析。
+- **板块走势**：板块涨跌排行、资金趋势及历史 K 线展示。
+- **投资建议**：综合评分、信号一致性、置信度、风险提示和历史对比。
+- **AI 问答**：通过预定义工具查询市场、基金、持仓和建议；支持 OpenAI 与 Anthropic 兼容配置。
+- **账号安全**：服务端会话配合 HttpOnly Cookie 与 CSRF Token；初始管理员由环境变量引导创建。
 
 ## 技术栈
 
 | 层级 | 技术 |
-|------|------|
-| **后端** | Python 3.9+ · FastAPI · SQLAlchemy (async) |
-| **前端** | Vue 3 · Vite · Element Plus · ECharts |
-| **数据库** | SQLite（aiosqlite 异步驱动） |
-| **数据采集** | AKShare（同步，asyncio.to_thread 包装） |
-| **定时任务** | APScheduler（每日 16:30 自动更新） |
-| **技术分析** | ta（Technical Analysis library） |
-
-## 快速开始
-
-### 环境要求
-
-- Python 3.9+
-- Node.js 16+
-
-### 安装步骤
-
-```bash
-# 1. 克隆项目
-git clone <your-repo-url>
-cd personal-invest-assistant
-
-# 2. 后端
-cd backend
-python -m venv venv
-source venv/bin/activate   # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 8001
-
-# 3. 前端（新开终端）
-cd frontend
-npm install
-npm run dev
-```
-
-首次启动后，可在前端「市场概览」页面点击「手动采集数据」按钮，或等待每日 16:30 自动采集。
-
-### 访问
-
-- **前端界面**：http://localhost:5173
-- **API 文档**：http://localhost:8001/docs
+| --- | --- |
+| 后端 | Python 3.11、FastAPI、SQLAlchemy Async、Alembic |
+| 数据库 | PostgreSQL 16（Docker Compose） |
+| 前端 | Vue 3、Vite、Element Plus、ECharts、Axios |
+| 数据采集 | AKShare、pandas、curl_cffi |
+| 分析与调度 | ta、APScheduler |
+| AI | OpenAI / Anthropic SDK、YAML Prompt、SSE |
+| 部署 | Docker Compose、Nginx、Uvicorn |
 
 ## 项目结构
 
-```
+```text
 personal-invest-assistant/
-├── backend/                          # 后端服务
+├── backend/
 │   ├── app/
-│   │   ├── api/                      # API 路由
-│   │   │   ├── market.py             #   市场概览、指数、资金流向、板块
-│   │   │   ├── funds.py              #   基金列表与详情
-│   │   │   ├── advice.py             #   投资建议
-│   │   │   ├── agent.py              #   AI 问答接口
-│   │   │   └── tasks.py              #   手动/自动数据更新任务
-│   │   ├── models/                   # 数据模型（SQLAlchemy ORM）
-│   │   ├── agent/                    # AI Agent 模块
-│   │   │   ├── core.py               #   Agent 核心（工具调用循环）
-│   │   │   ├── providers/            #   LLM 提供商适配器
-│   │   │   └── tools/                #   Agent 工具定义
-│   │   ├── services/
-│   │   │   ├── analyzer/             # 分析引擎
-│   │   │   │   ├── technical.py      #   技术分析（均线、动量、量价）
-│   │   │   │   ├── valuation.py      #   估值分析
-│   │   │   │   ├── fund_flow.py      #   资金流向分析
-│   │   │   │   ├── sentiment.py      #   市场情绪分析
-│   │   │   │   ├── sector.py         #   板块分析
-│   │   │   │   ├── advisor.py        #   综合建议生成器
-│   │   │   │   └── result.py         #   统一分析结果结构
-│   │   │   ├── data_collector/       # 数据采集
-│   │   │   │   ├── akshare_source.py #   AKShare 数据源
-│   │   │   │   ├── storage.py        #   数据库存储层
-│   │   │   │   └── scheduler.py      #   定时任务调度器
-│   │   │   └── advice_service.py     # 建议服务
-│   │   └── utils/
-│   │       └── db.py                 # 异步数据库初始化
-│   ├── data/                         # SQLite 数据库文件
-│   └── requirements.txt
-├── frontend/                         # 前端界面
-│   └── src/
-│       ├── views/
-│       │   ├── MarketOverview.vue    # 市场概览（指数卡片 + 资金流向）
-│       │   ├── FundList.vue          # 基金列表
-│       │   ├── FundDetail.vue        # 基金详情（净值走势、收益计算）
-│       │   ├── SectorAnalysis.vue    # 板块走势（涨跌排行 + K线图）
-│       │   ├── AdviceReport.vue      # 投资建议报告
-│       │   └── AgentSettings.vue     # AI 设置
-│       ├── api/index.js              # Axios API 封装
-│       └── router/index.js           # 路由配置
-├── scripts/
-│   ├── init_db.py                    # 数据库初始化脚本
-│   └── fetch_sample_data.py          # 手动数据采集脚本
-└── docs/                             # 设计文档
+│   │   ├── api/                  # 认证、市场、基金、建议、Agent、任务接口
+│   │   ├── agent/                # Provider、规划器、工具注册与执行、流式服务
+│   │   ├── models/               # 市场、建议、会话、用户与持仓 ORM 模型
+│   │   ├── services/             # 分析器、建议生成、数据采集与调度
+│   │   └── auth.py               # 会话与权限控制
+│   ├── alembic/                  # 数据库迁移
+│   ├── tests/                    # 存储层与 Agent 单元测试
+│   ├── Dockerfile
+│   └── pyproject.toml
+├── frontend/
+│   ├── src/views/                # 登录、市场、基金、板块、建议、AI 设置页面
+│   ├── src/api/                  # HTTP 与 SSE 客户端封装
+│   ├── Dockerfile
+│   └── nginx.conf
+├── docs/
+│   └── docker-deployment.md      # Docker 部署细节
+├── docker-compose.yml
+└── .env.production.example
 ```
 
-## 开发状态
+## 本地开发
 
-✅ **核心功能已完成** — 系统已可用，持续优化中。
+### 前置条件
 
-| 模块 | 状态 | 说明 |
-|------|------|------|
-| 指数行情采集（AKShare） | ✅ 已完成 | 上证、深证、创业板、沪深300、中证500 |
-| 资金流向采集 | ✅ 已完成 | 北向资金、主力资金流向 |
-| 市场概览页面 | ✅ 已完成 | 指数卡片 + 资金流向图表 |
-| 定时调度器（每日 16:30） | ✅ 已完成 | APScheduler 自动采集 |
-| 手动数据刷新 API | ✅ 已完成 | 支持指数、基金、板块数据刷新 |
-| 前端基础框架与路由 | ✅ 已完成 | Vue 3 + Element Plus + 暗黑主题 |
-| 技术分析引擎 | ✅ 已完成 | 均线、动量、量价分析 |
-| 估值分析引擎 | ✅ 已完成 | PE/PB 分位数分析 |
-| 资金流向分析 | ✅ 已完成 | 北向/主力资金趋势分析 |
-| 情绪分析引擎 | ✅ 已完成 | 市场恐慌/贪婪指数 |
-| 基金净值采集 | ✅ 已完成 | 支持 90 天历史净值 |
-| 基金列表与详情 | ✅ 已完成 | 净值走势、收益计算、基本信息 |
-| 板块数据采集 | ✅ 已完成 | 概念/行业板块涨跌排行 |
-| 板块走势页面 | ✅ 已完成 | 资金流向趋势、板块 K 线图 |
-| 综合建议生成 | ✅ 已完成 | 多维度评分 + 信号一致性检验 |
-| AI 问答助手 | ✅ 已完成 | Agent 工具调用 + OpenAI/Anthropic 支持 |
+- Python 3.11+
+- Node.js 22+（前端镜像使用 Node 22；本地应使用兼容版本）
+- PostgreSQL 16+
+- 可用的 OpenAI 或 Anthropic API Key（仅 AI 问答需要）
 
-### 🚧 待优化项
+### 1. 启动后端
 
-- [ ] 板块历史数据持久化存储
-- [ ] 用户设置持久化（AI Provider 配置）
-- [ ] 更多技术指标（MACD、RSI、布林带）
-- [ ] 投资组合跟踪功能
+在 `backend/.env` 中配置本地 PostgreSQL 连接；同时设置初始管理员和本地 Cookie 选项，例如：
 
-## 文档
+```dotenv
+DATABASE_URL=postgresql+asyncpg://postgres:password@localhost:5432/invest_assistant
+BOOTSTRAP_ADMIN_USERNAME=admin
+BOOTSTRAP_ADMIN_PASSWORD=change-this-to-a-strong-password
+SESSION_SECURE=false
+CORS_ORIGINS=http://localhost:3001,http://127.0.0.1:3001
+```
 
-详细设计方案请查看：[设计方案文档](./docs/design.md)
+然后安装依赖、执行迁移并启动：
+
+```powershell
+cd backend
+uv sync --extra test
+uv run alembic upgrade head
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8001
+```
+
+> 仅需浏览市场/基金数据时可不配置 LLM Key；进入 AI 助手前需在 `backend/.env` 配置对应 Provider 的 Key 和模型。
+
+### 2. 启动前端
+
+```powershell
+cd frontend
+npm ci
+npm run dev
+```
+
+- 前端：<http://localhost:3001>
+- API 文档：<http://localhost:8001/docs>
+
+首次登录使用上一步通过 `BOOTSTRAP_ADMIN_USERNAME` 和 `BOOTSTRAP_ADMIN_PASSWORD` 创建的管理员账号。
+
+## Docker 部署
+
+生产或演示环境推荐使用 Docker Compose：
+
+```powershell
+Copy-Item .env.production.example .env.production
+# 编辑 .env.production，替换数据库密码、管理员密码、CORS 域名和 LLM Key
+docker compose --env-file .env.production up -d --build
+docker compose --env-file .env.production ps
+```
+
+默认访问地址为 <http://localhost:8080>。生产环境应使用 HTTPS 反向代理并保留 `SESSION_SECURE=true`。详细配置、运维命令和数据卷注意事项见 [Docker 部署文档](docs/docker-deployment.md)。
+
+## 验证
+
+```powershell
+# 前端生产构建
+cd frontend
+npm run build
+
+# 后端测试（先用 uv 安装与锁文件一致的依赖）
+cd ../backend
+uv sync --extra test
+uv run pytest -q
+```
+
+当前仓库已确认前端构建成功。后端测试在锁定依赖环境中的结果为 **13 passed、3 failed**；失败均为鉴权改造后需要更新的 Agent/SSE 测试夹具。后端测试应使用 `uv` 的锁定依赖环境执行，避免全局 Python 中 pandas/NumPy ABI 不匹配导致的收集失败。
 
 ## 风险提示
 
-**本系统仅供学习和参考，不构成投资建议。**
-
-投资有风险，入市需谨慎。系统给出的建议基于历史数据和技术分析，不能预测未来市场走势。用户应根据自身情况独立判断，承担投资风险。
+本项目仅用于学习和信息辅助，不构成投资建议。市场数据可能延迟、缺失或受第三方数据源限制；任何投资决策均应由用户独立判断并自行承担风险。
 
 ## License
 
@@ -172,4 +156,4 @@ MIT
 
 ---
 
-*创建日期：2026-07-02 · 最后更新：2026-07-23*
+创建日期：2026-07-02 · 本次状态更新：2026-08-02
