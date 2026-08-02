@@ -1,5 +1,6 @@
 <template>
-  <el-container class="app-container">
+  <router-view v-if="isPublicRoute" />
+  <el-container v-else class="app-container">
     <el-header class="app-header">
       <div class="header-brand">
         <svg class="brand-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -307,13 +308,15 @@
 </template>
 
 <script setup>
-import { ref, nextTick, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, ref, nextTick, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import { agentApi, authApi } from './api'
 
 const router = useRouter()
+const route = useRoute()
+const isPublicRoute = computed(() => route.matched.some(record => record.meta.public))
 
 const drawerVisible = ref(false)
 const question = ref('')
@@ -420,12 +423,15 @@ const toolLabel = (step) => {
 }
 
 const loadConversations = async () => {
+  if (isPublicRoute.value) return
   historyLoading.value = true
   try {
     const { data } = await agentApi.getConversations()
     conversations.value = data.conversations || []
   } catch (error) {
-    ElMessage.error('加载历史会话失败: ' + error.message)
+    if (error.response?.status !== 401) {
+      ElMessage.error('加载历史会话失败: ' + error.message)
+    }
   } finally {
     historyLoading.value = false
   }
@@ -507,7 +513,22 @@ const formatConversationTime = (value) => {
   return `${date.getMonth() + 1}月${date.getDate()}日`
 }
 
-onMounted(loadConversations)
+const resetPrivateState = () => {
+  drawerVisible.value = false
+  messages.value = []
+  conversations.value = []
+  currentConversationId.value = null
+  historyExpanded.value = false
+}
+
+watch(isPublicRoute, isPublic => {
+  if (isPublic) resetPrivateState()
+  else loadConversations()
+})
+
+onMounted(() => {
+  if (!isPublicRoute.value) loadConversations()
+})
 
 const clearMessages = () => {
   messages.value = []
