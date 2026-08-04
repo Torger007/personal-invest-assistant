@@ -10,6 +10,7 @@
 必须在任何其他 import 之前执行。
 """
 import os
+import time
 
 # 1. 清除系统代理（通过环境变量）
 for proxy_var in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY', 'all_proxy']:
@@ -43,6 +44,7 @@ _HEADERS = {
     "Sec-Fetch-User": "?1",
     "Cache-Control": "max-age=0",
 }
+_REQUEST_TIMEOUT_SECONDS = 20
 
 # 保存原始 Session 类
 _OriginalSession = requests.Session
@@ -63,13 +65,25 @@ class PatchedSession(curl_requests.Session):
         """禁用 mount，阻止 akshare 的 HTTPAdapter 覆盖 curl_cffi 适配器"""
         pass
 
+    @staticmethod
+    def _with_retry(request, *args, **kwargs):
+        for attempt in range(2):
+            try:
+                return request(*args, **kwargs)
+            except Exception:
+                if attempt == 1:
+                    raise
+                time.sleep(0.5)
+
     def get(self, url, **kwargs):
         kwargs.pop('proxies', None)
-        return super().get(url, **kwargs)
+        kwargs.setdefault('timeout', _REQUEST_TIMEOUT_SECONDS)
+        return self._with_retry(super().get, url, **kwargs)
 
     def request(self, method, url, **kwargs):
         kwargs.pop('proxies', None)
-        return super().request(method, url, **kwargs)
+        kwargs.setdefault('timeout', _REQUEST_TIMEOUT_SECONDS)
+        return self._with_retry(super().request, method, url, **kwargs)
 
 # 替换 requests.Session
 requests.Session = PatchedSession

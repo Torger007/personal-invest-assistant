@@ -21,7 +21,7 @@ from sqlalchemy import select
 scheduler = AsyncIOScheduler()
 
 
-async def daily_data_update():
+async def _legacy_daily_data_update():
     """每日数据更新任务
 
     每个交易日16:30执行：
@@ -114,9 +114,138 @@ async def daily_data_update():
             print(f"[调度器] 数据更新失败: {e}")
 
 
+async def daily_data_update():
+    """Refresh each data domain independently and return an auditable result."""
+    from datetime import date as date_type, datetime
+
+    result = {
+        "status": "success",
+        "started_at": datetime.now().isoformat(timespec="seconds"),
+        "completed_at": None,
+        "stages": {},
+    }
+    source = AkShareSource()
+    portfolio = get_portfolio_info()
+
+    async def run_stage(name, operation):
+        try:
+            details = await operation()
+            warnings = details.pop("warnings", [])
+            result["stages"][name] = {
+                "status": "partial" if warnings else "success",
+                **details,
+                "warnings": warnings,
+            }
+        except Exception as exc:
+            result["stages"][name] = {
+                "status": "failed",
+                "error": str(exc),
+                "warnings": [],
+            }
+
+    async with AsyncSessionLocal() as session:
+        storage = DataStorage(session)
+
+        async def update_indices():
+            records = 0
+            warnings = []
+            for index_code in ["000001", "399001", "399006"]:
+                data = await asyncio.to_thread(source.get_index_daily, index_code, 5)
+                if not data:
+                    warnings.append(f"{index_code}: no data returned")
+                    continue
+                await storage.save_index_daily(data)
+                records += len(data)
+            return {"records": records, "warnings": warnings}
+
+        async def update_fund_flow():
+            data = await asyncio.to_thread(source.get_fund_flow, 5)
+            if not data:
+                return {"records": 0, "warnings": ["market fund flow: no data returned"]}
+            await storage.save_fund_flow(data)
+            return {"records": len(data), "warnings": []}
+
+        async def update_funds():
+            nav_records = 0
+            warnings = []
+            for fund in portfolio:
+                code = fund["code"]
+                info = await asyncio.to_thread(source.get_fund_info, code)
+                if info and info.get("name"):
+                    await storage.save_fund_info(info)
+                else:
+                    warnings.append(f"{code}: fund info unavailable")
+
+                nav_data = await asyncio.to_thread(source.get_fund_nav, code, 30)
+                if not nav_data:
+                    warnings.append(f"{code}: NAV unavailable")
+                    continue
+                await storage.save_fund_nav(nav_data)
+                nav_records += len(nav_data)
+            return {"records": nav_records, "warnings": warnings}
+
+        async def update_sectors():
+            board_records = 0
+            daily_records = 0
+            warnings = []
+            today = date_type.today()
+            for board_type in ("concept", "industry"):
+                sector_list = await asyncio.to_thread(source.get_sector_list, sector_type=board_type)
+                if not sector_list:
+                    warnings.append(f"{board_type}: no board data returned")
+                    continue
+
+                for sector in sector_list:
+                    sector["snap_date"] = today
+                await storage.save_sector_board(sector_list)
+                board_records += len(sector_list)
+
+                # This query is intentionally scoped to the snapshot just saved above.
+                hot_names = await storage.get_hot_sectors(sector_type=board_type, top_n=10)
+                for name in hot_names:
+                    hist = await asyncio.to_thread(
+                        source.get_sector_hist,
+                        sector_name=name,
+                        days=30,
+                        sector_type=board_type,
+                    )
+                    if not hist:
+                        warnings.append(f"{board_type}/{name}: history unavailable")
+                        continue
+                    await storage.save_sector_daily(hist)
+                    daily_records += len(hist)
+            return {
+                "records": board_records,
+                "daily_records": daily_records,
+                "warnings": warnings,
+            }
+
+        async def update_advice():
+            from app.services.advice_generator import generate_advice_for_portfolio
+
+            generated = 0
+            for user in (await session.execute(select(User).where(User.is_active.is_(True)))).scalars():
+                generated += len(await generate_advice_for_portfolio(session, user.id))
+            return {"records": generated, "warnings": []}
+
+        await run_stage("indices", update_indices)
+        await run_stage("fund_flow", update_fund_flow)
+        await run_stage("funds", update_funds)
+        await run_stage("sectors", update_sectors)
+        await run_stage("advice", update_advice)
+
+    stage_states = [stage["status"] for stage in result["stages"].values()]
+    if "failed" in stage_states:
+        result["status"] = "failed"
+    elif "partial" in stage_states:
+        result["status"] = "partial"
+    result["completed_at"] = datetime.now().isoformat(timespec="seconds")
+    return result
+
+
 async def manual_refresh():
     """手动触发数据更新"""
-    await daily_data_update()
+    return await daily_data_update()
 
 
 def setup_scheduler():

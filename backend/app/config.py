@@ -18,11 +18,17 @@ class Settings(BaseSettings):
     API_PREFIX: str = "/api"
 
     # Set the bootstrap values once to provision the first administrator.
-    SESSION_COOKIE_NAME: str = "invest_session"
+    ACCESS_TOKEN_COOKIE_NAME: str = "invest_access"
+    REFRESH_TOKEN_COOKIE_NAME: str = "invest_refresh"
     CSRF_COOKIE_NAME: str = "invest_csrf"
-    SESSION_DAYS: int = 14
+    ACCESS_TOKEN_MINUTES: int = 15
+    REFRESH_TOKEN_DAYS: int = 14
+    JWT_SECRET: str = ""
+    JWT_ISSUER: str = "personal-invest-assistant"
+    JWT_AUDIENCE: str = "personal-invest-assistant-web"
     SESSION_SECURE: bool = False
     CORS_ORIGINS: str = "http://localhost:3001,http://127.0.0.1:3001"
+    CSRF_TRUSTED_ORIGINS: str = ""
     BOOTSTRAP_ADMIN_USERNAME: str = ""
     BOOTSTRAP_ADMIN_PASSWORD: str = ""
 

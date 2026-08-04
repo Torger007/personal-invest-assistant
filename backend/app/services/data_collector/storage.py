@@ -2,7 +2,7 @@
 from typing import Dict, List
 from datetime import date
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.models.fund import Fund, FundNav
 from app.models.market import IndexDaily, FundFlow, SectorBoard, SectorDaily
@@ -313,10 +313,17 @@ class DataStorage:
         Returns:
             List[Dict]: 板块排名列表，按涨跌幅降序
         """
+        latest_snapshot = await self.get_latest_sector_snapshot_date(sector_type)
+        if latest_snapshot is None:
+            return []
+
         from sqlalchemy import desc
         result = await self._db.execute(
             select(SectorBoard)
-            .where(SectorBoard.type == sector_type)
+            .where(
+                SectorBoard.type == sector_type,
+                SectorBoard.snap_date == latest_snapshot,
+            )
             .order_by(desc(SectorBoard.change_pct))
             .limit(limit)
         )
@@ -336,6 +343,13 @@ class DataStorage:
             }
             for r in records
         ]
+
+    async def get_latest_sector_snapshot_date(self, sector_type: str = "concept") -> date | None:
+        """Return the newest stored snapshot date for one board type."""
+        result = await self._db.execute(
+            select(func.max(SectorBoard.snap_date)).where(SectorBoard.type == sector_type)
+        )
+        return result.scalar_one()
 
     async def save_sector_daily(self, daily_list: List[Dict]) -> bool:
         """保存板块日线数据（支持批量 upsert）
@@ -418,10 +432,17 @@ class DataStorage:
         Returns:
             List[str]: 板块名称列表
         """
+        latest_snapshot = await self.get_latest_sector_snapshot_date(sector_type)
+        if latest_snapshot is None:
+            return []
+
         from sqlalchemy import desc
         result = await self._db.execute(
             select(SectorBoard.name)
-            .where(SectorBoard.type == sector_type)
+            .where(
+                SectorBoard.type == sector_type,
+                SectorBoard.snap_date == latest_snapshot,
+            )
             .order_by(desc(SectorBoard.change_pct))
             .limit(top_n)
         )

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Date, DateTime, Numeric, BigInteger, Float
+from sqlalchemy import Column, Integer, String, Date, DateTime, Numeric, BigInteger, Float, UniqueConstraint
 from sqlalchemy.sql import func
 from app.utils.db import Base
 
@@ -30,6 +30,9 @@ class FundFlow(Base):
 class SectorBoard(Base):
     """板块排名快照（概念/行业板块的每日涨跌排名）"""
     __tablename__ = "sector_board"
+    __table_args__ = (
+        UniqueConstraint("type", "name", "snap_date", name="uq_sector_board_type_name_date"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     code = Column(String(20))       # 板块代码
@@ -46,6 +49,9 @@ class SectorBoard(Base):
 class SectorDaily(Base):
     """板块日线行情（单个板块的历史K线）"""
     __tablename__ = "sector_daily"
+    __table_args__ = (
+        UniqueConstraint("sector_name", "date", name="uq_sector_daily_name_date"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     sector_name = Column(String(50))  # 板块名称

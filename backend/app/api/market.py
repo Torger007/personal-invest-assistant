@@ -127,11 +127,11 @@ async def get_sectors(
                 "message": f"暂无{sector_type}板块数据，请先采集"
             }
 
-        update_time = sectors[0].get("snap_date") if sectors else None
+        update_time = await storage.get_latest_sector_snapshot_date(sector_type)
 
         return {
             "sectors": sectors,
-            "update_time": update_time,
+            "update_time": str(update_time) if update_time else None,
             "sector_type": sector_type,
             "total": len(sectors)
         }
@@ -189,6 +189,8 @@ async def get_sector_trend(
                 "message": "暂无板块数据，请先采集"
             }
 
+        update_time = await storage.get_latest_sector_snapshot_date(sector_type)
+
         # 调用分析器
         analyzer = SectorAnalyzer()
         result = analyzer.analyze(sectors)
@@ -196,7 +198,7 @@ async def get_sector_trend(
         return {
             "status": "ok",
             "sector_type": sector_type,
-            "update_time": sectors[0].get("snap_date") if sectors else None,
+            "update_time": str(update_time) if update_time else None,
             "analysis": result
         }
     except Exception as e:

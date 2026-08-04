@@ -284,6 +284,9 @@ class AkShareSource:
         result = []
         for _, row in df.iterrows():
             try:
+                if len(row) < 12:
+                    print("[AKShare] Unexpected market fund-flow schema; skipping row")
+                    continue
                 date_val = row.iloc[0]  # 日期
                 if isinstance(date_val, str):
                     date_val = datetime.strptime(date_val, "%Y-%m-%d").date()
@@ -362,6 +365,9 @@ class AkShareSource:
         result = []
         for _, row in df.iterrows():
             try:
+                if len(row) < 12:
+                    print("[AKShare] Unexpected industry-board schema; skipping row")
+                    continue
                 result.append({
                     "code": str(row.iloc[1]),       # 名称（兼做code）
                     "name": str(row.iloc[1]),        # 名称
@@ -400,6 +406,7 @@ class AkShareSource:
         result = []
         # 限制计算涨跌幅的板块数量，避免请求过多
         limit = min(50, len(df))
+        start_date = (date.today() - timedelta(days=21)).strftime("%Y%m%d")
 
         for idx, row in df.iterrows():
             try:
@@ -412,7 +419,7 @@ class AkShareSource:
                     try:
                         # 获取最近2天的指数数据计算涨跌幅
                         hist_df = ak.stock_board_concept_index_ths(
-                            symbol=name, start_date="20260101", end_date=date.today().strftime("%Y%m%d")
+                            symbol=name, start_date=start_date, end_date=date.today().strftime("%Y%m%d")
                         )
                         if hist_df is not None and len(hist_df) >= 2:
                             # 取最后两行的收盘价（第5列）

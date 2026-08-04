@@ -162,6 +162,7 @@
 
 <script setup>
 import { ref, computed, onMounted, nextTick, onBeforeUnmount, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import { marketApi, taskApi } from '../api'
 
@@ -276,23 +277,52 @@ const selectSector = async (name) => {
 const handleRefresh = async () => {
   refreshing.value = true
   try {
-    await taskApi.refresh()
+    const { data: started } = await taskApi.refresh()
+    if (started.status === 'skipped') {
+      ElMessage.warning(started.message || '已有更新任务正在运行')
+    }
     let attempts = 0
     const poll = async () => {
-      if (attempts++ > 60) { refreshing.value = false; return }
+      if (attempts++ > 60) {
+        refreshing.value = false
+        ElMessage.warning('数据更新仍在执行，请稍后刷新页面查看结果')
+        return
+      }
       try {
         const { data } = await taskApi.getStatus()
         if (data.running) {
           setTimeout(poll, 2000)
         } else {
           refreshing.value = false
+          const result = data.last_result
+          if (!result) {
+            ElMessage.warning('未获取到本次更新结果，请稍后重试')
+            return
+          }
+          if (result.status === 'failed') {
+            ElMessage.error(result.error || '数据更新失败')
+            return
+          }
           await loadData()
+          if (result.status === 'partial') {
+            const failedStages = Object.entries(result.stages || {})
+              .filter(([, stage]) => stage.status !== 'success')
+              .map(([name]) => name)
+            ElMessage.warning(`数据已部分更新${failedStages.length ? `：${failedStages.join('、')}` : ''}`)
+          } else {
+            ElMessage.success('数据已更新')
+          }
         }
-      } catch { refreshing.value = false }
+      } catch (error) {
+        refreshing.value = false
+        ElMessage.error('无法获取更新状态')
+        console.error(error)
+      }
     }
     setTimeout(poll, 1000)
   } catch (e) {
     refreshing.value = false
+    ElMessage.error('无法启动数据更新')
     console.error(e)
   }
 }

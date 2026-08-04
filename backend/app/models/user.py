@@ -22,10 +22,15 @@ class UserSession(Base):
 
     token_hash = Column(String(64), primary_key=True)
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    family_id = Column(String(36), nullable=True, index=True)
     csrf_token = Column(String(128), nullable=False)
     created_at = Column(DateTime, default=func.now(), nullable=False)
     expires_at = Column(DateTime, nullable=False, index=True)
     last_seen_at = Column(DateTime, default=func.now(), nullable=False)
+    revoked_at = Column(DateTime)
+    replaced_by_hash = Column(String(64))
+    user_agent = Column(String(512))
+    ip_address = Column(String(64))
 
 
 class UserPortfolioItem(Base):

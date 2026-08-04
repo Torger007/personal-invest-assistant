@@ -19,8 +19,38 @@ api.interceptors.request.use(config => {
   return config
 })
 
+let refreshPromise = null
+
+async function refreshAccessToken() {
+  if (!refreshPromise) {
+    refreshPromise = api.post('/auth/refresh', null, { skipAuthRefresh: true })
+      .finally(() => { refreshPromise = null })
+  }
+  return refreshPromise
+}
+
+api.interceptors.response.use(
+  response => response,
+  async error => {
+    const config = error.config
+    const isLoginRequest = config?.url?.includes('/auth/login')
+    if (error.response?.status !== 401 || !config || config._retry || config.skipAuthRefresh || isLoginRequest) {
+      return Promise.reject(error)
+    }
+    config._retry = true
+    try {
+      await refreshAccessToken()
+      return api(config)
+    } catch (refreshError) {
+      if (window.location.pathname !== '/login') window.location.assign('/login')
+      return Promise.reject(refreshError)
+    }
+  }
+)
+
 export const authApi = {
   login: (username, password) => api.post('/auth/login', { username, password }),
+  refresh: () => refreshAccessToken(),
   logout: () => api.post('/auth/logout'),
   me: () => api.get('/auth/me')
 }
@@ -88,7 +118,11 @@ export const agentApi = {
 }
 
 async function readSseResponse(url, options, onEvent) {
-  const response = await fetch(url, options)
+  let response = await fetch(url, options)
+  if (response.status === 401) {
+    await refreshAccessToken()
+    response = await fetch(url, options)
+  }
   if (!response.ok || !response.body) {
     throw new Error(`请求失败 (${response.status})`)
   }

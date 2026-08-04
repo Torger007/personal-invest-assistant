@@ -1,12 +1,15 @@
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import create_session, get_current_user, revoke_session, user_to_dict, verify_password
+from app.auth import (
+    create_session, get_current_user, refresh_session, revoke_session,
+    user_to_dict, verify_password,
+)
 from app.models.user import User
 from app.utils.db import get_db
 
@@ -36,7 +39,18 @@ async def login(payload: LoginRequest, request: Request, response: Response, db:
     user = await db.scalar(select(User).where(User.username == payload.username.strip()))
     if not user or not user.is_active or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password")
-    await create_session(response, db, user)
+    await create_session(response, request, db, user)
+    return {"user": user_to_dict(user)}
+
+
+@router.post("/refresh")
+async def refresh(
+    request: Request,
+    response: Response,
+    x_csrf_token: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    user = await refresh_session(request, response, db, x_csrf_token)
     return {"user": user_to_dict(user)}
 
 

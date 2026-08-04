@@ -215,3 +215,36 @@ class TestDataStorage:
         assert len(result) == 2
         assert result[0]["date"] == date(2024, 1, 5)
         assert result[1]["date"] == date(2024, 1, 4)
+
+    async def test_sector_queries_only_use_the_latest_snapshot(self, storage):
+        """Old high performers must not appear in the current board ranking."""
+        await storage.save_sector_board([
+            {
+                "code": "old", "name": "Old winner", "type": "concept",
+                "change_pct": 10.0, "volume": 0.0, "amount": 0.0,
+                "leader": "", "leader_change": 0.0, "snap_date": date(2024, 1, 2),
+            },
+            {
+                "code": "old-2", "name": "Old loser", "type": "concept",
+                "change_pct": -5.0, "volume": 0.0, "amount": 0.0,
+                "leader": "", "leader_change": 0.0, "snap_date": date(2024, 1, 2),
+            },
+        ])
+        await storage.save_sector_board([
+            {
+                "code": "new", "name": "Current winner", "type": "concept",
+                "change_pct": 1.0, "volume": 0.0, "amount": 0.0,
+                "leader": "", "leader_change": 0.0, "snap_date": date(2024, 1, 3),
+            },
+            {
+                "code": "new-2", "name": "Current runner-up", "type": "concept",
+                "change_pct": 0.5, "volume": 0.0, "amount": 0.0,
+                "leader": "", "leader_change": 0.0, "snap_date": date(2024, 1, 3),
+            },
+        ])
+
+        boards = await storage.get_sector_board("concept", limit=10)
+        assert [board["name"] for board in boards] == ["Current winner", "Current runner-up"]
+        assert {board["snap_date"] for board in boards} == {"2024-01-03"}
+        assert await storage.get_latest_sector_snapshot_date("concept") == date(2024, 1, 3)
+        assert await storage.get_hot_sectors("concept", top_n=1) == ["Current winner"]
