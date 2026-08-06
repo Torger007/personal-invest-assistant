@@ -316,7 +316,7 @@ const pollStatus = async () => {
 }
 
 const goIndexDetail = (code) => {
-  router.push(`/funds/${code}`)
+  router.push('/funds')
 }
 
 const openAiDrawer = () => {

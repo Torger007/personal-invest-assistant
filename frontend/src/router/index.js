@@ -19,9 +19,8 @@ const routes = [
     component: () => import('../views/FundList.vue')
   },
   {
-    path: '/funds/:code',
-    name: 'FundDetail',
-    component: () => import('../views/FundDetail.vue')
+    path: '/funds/:positionId',
+    redirect: '/funds'
   },
   {
     path: '/sectors',

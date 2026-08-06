@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.user import User, UserSession
-from app.services.portfolio_service import seed_default_portfolio
 from app.utils.db import AsyncSessionLocal, get_db
 
 _password_hasher = PasswordHasher()
@@ -297,5 +296,4 @@ async def provision_bootstrap_admin() -> None:
             return
         user = User(id=str(uuid4()), username=username, password_hash=hash_password(password), role="admin")
         db.add(user)
-        await seed_default_portfolio(db, user.id)
         await db.commit()

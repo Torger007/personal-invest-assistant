@@ -71,9 +71,12 @@ export const marketApi = {
 // 基金相关
 export const fundApi = {
   getList: () => api.get('/funds/'),
-  getDetail: (code) => api.get(`/funds/${code}`),
-  getNav: (code, days = 30) => api.get(`/funds/${code}/nav`, { params: { days } }),
-  refresh: (code, days = 90) => api.post(`/funds/${code}/refresh`, null, { params: { days } })
+  getOptions: () => api.get('/funds/options'),
+  search: (keyword) => api.get('/funds/search', { params: { keyword } }),
+  create: (payload) => api.post('/funds/', payload),
+  getDetail: (positionId) => api.get(`/funds/${positionId}`),
+  calibrate: (positionId, payload) => api.put(`/funds/${positionId}/calibration`, payload),
+  remove: (positionId) => api.delete(`/funds/${positionId}`)
 }
 
 // 建议相关
