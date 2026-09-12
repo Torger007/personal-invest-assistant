@@ -7,7 +7,7 @@ class FakeTools:
     def __init__(self):
         self.calls = []
 
-    async def execute(self, name, arguments):
+    async def execute(self, name, arguments, user_id=None):
         self.calls.append((name, arguments))
         return {
             "status": "success",
@@ -39,6 +39,7 @@ async def test_planned_run_executes_references_and_hides_tools_from_llm():
     core.llm = FakeLLM()
     core.tools = FakeTools()
     core.conversation = []
+    core.user_id = None
     plan = ToolPlan(
         "single_fund",
         [
@@ -95,6 +96,7 @@ async def test_stream_planned_emits_tool_progress_and_tokens():
     core.tools = FakeTools()
     core.conversation = []
     core.execution_trace = {}
+    core.user_id = None
     plan = ToolPlan("market", [PlanStep("get_market_overview")])
 
     events = [event async for event in core.stream_planned("市场怎么样？", plan)]

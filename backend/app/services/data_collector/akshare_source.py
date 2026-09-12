@@ -198,7 +198,7 @@ class AkShareSource:
         self.__class__._fund_name_cache = (0, None)
 
     def get_fund_info(self, fund_code: str) -> Dict:
-        """获取基金基本信息（从全市场基金列表查询）
+        """获取基金基本信息。
 
         Args:
             fund_code: 基金代码
@@ -206,32 +206,35 @@ class AkShareSource:
         Returns:
             Dict: 包含 code/name/type 等信息，失败时只返回 code
         """
-        for attempt in range(2):
-            try:
-                df = self._get_fund_name_df()
-                if df is not None and not df.empty:
-                    row = df[df["基金代码"].astype(str) == str(fund_code)]
-                    if not row.empty:
-                        row = row.iloc[0]
-                        name = str(row.get("基金简称", "")).strip()
-                        fund_type = str(row.get("基金类型", "")).strip()
-                        if name:
-                            return {
-                                "code": fund_code,
-                                "name": name,
-                                "type": fund_type,
-                            }
-            except Exception as e:
-                print(f"[AKShare] fund_name_em 失败 (尝试 {attempt+1}/2): {e}")
-                if attempt < 1:
-                    # 清除缓存后重试一次
-                    import time
-                    time.sleep(0.5)
-                    self._clear_fund_name_cache()
+        # 不要为查询一只基金下载全市场基金列表。fund_name_em 依赖东方财富的
+        # JavaScript 文件；该文件在部分网络环境会以错误编码返回，且 AKShare 内部
+        # 没有请求超时，失败重试会阻塞 Agent 的流式响应。
+        #
+        # 雪球的单基金接口只返回目标基金，并支持 timeout 参数，适合交互式查询。
+        code = str(fund_code).strip()
+        if not code.isdigit() or len(code) != 6:
+            print(f"[AKShare] 无效基金代码: {fund_code!r}")
+            return {"code": code}
 
-        # 失败时只返回 code，调用方会跳过入库（因为没有 name）
-        print(f"[AKShare] get_fund_info 失败，未获取到 {fund_code} 的基金信息")
-        return {"code": fund_code}
+        try:
+            df = ak.fund_individual_basic_info_xq(symbol=code, timeout=10)
+            if df is not None and not df.empty:
+                details = dict(zip(df["item"], df["value"]))
+                name = str(details.get("基金名称") or "").strip()
+                fund_type = str(details.get("基金类型") or "").strip()
+                if name:
+                    return {
+                        "code": code,
+                        "name": name,
+                        "type": fund_type,
+                    }
+        except Exception as e:
+            print(f"[AKShare] 获取基金 {code} 基本信息失败: {e}")
+
+        # 返回代码让上层可以继续根据已有净值/建议给出谨慎结论；不要退回到
+        # fund_name_em，以免一个不可用的全量列表请求拖住整个问答。
+        print(f"[AKShare] get_fund_info 未获取到 {code} 的基金信息")
+        return {"code": code}
 
     def get_fund_list(self) -> List[Dict]:
         """获取全市场基金列表

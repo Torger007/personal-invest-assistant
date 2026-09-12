@@ -447,8 +447,23 @@ async def _execute_get_fund_info(tool_input: dict) -> dict:
     fund_code = tool_input["fund_code"]
 
     source = AkShareSource()
-    data = await asyncio.to_thread(source.get_fund_info, fund_code)
+    try:
+        data = await asyncio.wait_for(
+            asyncio.to_thread(source.get_fund_info, fund_code), timeout=15,
+        )
+    except asyncio.TimeoutError:
+        return {
+            "status": "error",
+            "data": {"code": fund_code},
+            "error": "获取基金基本信息超时，请稍后重试",
+        }
 
+    if not data.get("name"):
+        return {
+            "status": "error",
+            "data": data,
+            "error": "未获取到基金基本信息，请确认基金代码或稍后重试",
+        }
     return {
         "status": "success",
         "data": data

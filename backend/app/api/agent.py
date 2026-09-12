@@ -174,6 +174,11 @@ async def _events_with_generation_status(
         try:
             async for event in event_stream:
                 await queue.put(event)
+        except Exception as error:
+            # Covers failures before AgentService enters its own error handler,
+            # such as conversation preparation.  Without a terminal event the
+            # browser only sees a closed stream and can remain in "thinking".
+            await queue.put({"type": "error", "message": f"问答服务异常：{error}"})
         finally:
             await queue.put(None)
 
