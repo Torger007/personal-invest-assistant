@@ -173,11 +173,12 @@ async def save_advice_record(
     existing = (await db.execute(stmt)).scalar_one_or_none()
 
     # 准备要保存的数据
-    advice_text = result.get("advice_text", "")
-    if isinstance(advice_text, str):
-        advice_text_for_db = advice_text
-    else:
-        advice_text_for_db = json.dumps(result, ensure_ascii=False, default=str)
+    # Preserve the complete deterministic output (including target_position,
+    # consistency, and scores) so no later LLM needs to infer a decision from
+    # prose.  Existing plain-text records remain readable via the compatibility
+    # parser in the tool executor.
+    advice_payload = dict(result)
+    advice_text_for_db = json.dumps(advice_payload, ensure_ascii=False, default=str)
 
     if existing:
         existing.overall_signal = result.get("overall_signal")

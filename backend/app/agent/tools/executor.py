@@ -16,7 +16,6 @@ from app.models import AdviceRecord
 from app.models.agent import AgentAnalysis
 from app.models.fund import Fund
 from app.services.portfolio_service import get_user_portfolio
-from app.portfolio import get_portfolio_codes, get_portfolio_info
 from app.services.advice_generator import generate_advice_for_portfolio
 from app.services.analyzer.sector import SectorAnalyzer
 from app.services.data_collector.akshare_source import AkShareSource
@@ -68,7 +67,7 @@ async def execute_tool(tool_name: str, tool_input: dict, user_id: str | None = N
             return await _execute_get_sector_trend(tool_input)
 
         elif tool_name == "compare_funds":
-            return await _execute_compare_funds(tool_input)
+            return await _execute_compare_funds(tool_input, user_id)
 
         elif tool_name == "get_analysis_history":
             return await _execute_get_analysis_history(tool_input, user_id)
@@ -283,25 +282,30 @@ async def _execute_get_sector_trend(tool_input: dict) -> dict:
     }
 
 
-async def _execute_compare_funds(tool_input: dict) -> dict:
+async def _execute_compare_funds(tool_input: dict, user_id: str | None) -> dict:
     """基于最新结构化建议横向比较基金。"""
-    requested_codes = tool_input.get("fund_codes") or get_portfolio_codes()
-    fund_codes = [str(code).strip() for code in requested_codes if str(code).strip()]
-    fund_codes = list(dict.fromkeys(fund_codes))
-
-    if not fund_codes:
-        return {
-            "status": "error",
-            "error": "fund_codes 为空，无法比较",
-        }
-
-    portfolio_map = {fund["code"]: fund for fund in get_portfolio_info()}
+    if not user_id:
+        return {"status": "error", "error": "Missing user context"}
 
     async with AsyncSessionLocal() as session:
+        portfolio = await get_user_portfolio(session, user_id)
+        portfolio_map = {fund["code"]: fund for fund in portfolio}
+        requested_codes = tool_input.get("fund_codes") or list(portfolio_map)
+        fund_codes = [str(code).strip() for code in requested_codes if str(code).strip()]
+        fund_codes = list(dict.fromkeys(fund_codes))
+
+        if not fund_codes:
+            return {
+                "status": "error",
+                "error": "fund_codes 为空，无法比较",
+            }
+
         comparisons = []
         for code in fund_codes:
             fund = await session.get(Fund, code)
-            records = await _fetch_advice_records(session, fund_code=code, limit=1)
+            records = await _fetch_advice_records(
+                session, fund_code=code, limit=1, user_id=user_id,
+            )
             record = records[0] if records else None
             latest_advice = _advice_record_to_dict(record) if record else None
             extra = latest_advice.get("extra", {}) if latest_advice else {}

@@ -33,6 +33,7 @@
       <div v-if="answer" class="chat-answer">
         <el-divider />
         <ToolProgress v-if="asking || questionProgress.length" :items="questionProgress" />
+        <DecisionCard v-if="questionDecision" :decision="questionDecision" />
         <pre class="answer-text">{{ answer }}</pre>
       </div>
       <ToolProgress v-else-if="asking" :items="questionProgress" />
@@ -62,6 +63,7 @@
       <div v-if="lastResult" class="analysis-result">
         <el-divider />
         <ToolProgress v-if="analysisProgress.length" :items="analysisProgress" />
+        <DecisionCard v-if="analysisDecision" :decision="analysisDecision" />
         <pre class="answer-text">{{ lastResult }}</pre>
       </div>
       <ToolProgress v-else-if="analyzing" :items="analysisProgress" />
@@ -113,11 +115,13 @@ const question = ref('')
 const asking = ref(false)
 const answer = ref('')
 const questionProgress = ref([])
+const questionDecision = ref(null)
 
 const autoEnabled = ref(false)
 const analyzing = ref(false)
 const lastResult = ref('')
 const analysisProgress = ref([])
+const analysisDecision = ref(null)
 
 const history = ref([])
 const loadingHistory = ref(false)
@@ -129,9 +133,10 @@ const sendQuestion = async () => {
   asking.value = true
   answer.value = ''
   questionProgress.value = []
+  questionDecision.value = null
   try {
     await agentApi.chatStream(question.value.trim(), event => {
-      applyAgentEvent(event, answer, questionProgress)
+      applyAgentEvent(event, answer, questionProgress, questionDecision)
     })
   } catch (e) {
     ElMessage.error('问答失败: ' + e.message)
@@ -148,11 +153,12 @@ const triggerAnalysis = async () => {
   analyzing.value = true
   lastResult.value = ''
   analysisProgress.value = []
+  analysisDecision.value = null
   try {
     const { data } = await agentApi.triggerAnalysis()
     await new Promise((resolve, reject) => {
       const source = agentApi.subscribeAnalysis(data.task_id, (event, currentSource) => {
-        applyAgentEvent(event, lastResult, analysisProgress)
+        applyAgentEvent(event, lastResult, analysisProgress, analysisDecision)
         if (event.type === 'complete') {
           currentSource.close()
           ElMessage.success('分析完成')
@@ -190,7 +196,7 @@ const toolLabels = {
   get_analysis_history: '正在读取历史判断'
 }
 
-const applyAgentEvent = (event, result, progress) => {
+const applyAgentEvent = (event, result, progress, decision) => {
   if (event.type === 'tool_started') {
     progress.value.push({ name: event.name, status: 'running' })
   } else if (event.type === 'tool_completed') {
@@ -209,8 +215,30 @@ const applyAgentEvent = (event, result, progress) => {
     if (item) item.status = 'success'
   } else if (event.type === 'error') {
     progress.value.push({ name: 'error', status: 'error', message: event.message })
+  } else if ((event.type === 'decision_ready' || event.type === 'degraded') && event.decision) {
+    decision.value = event.decision
   }
 }
+
+const DecisionCard = defineComponent({
+  props: { decision: { type: Object, required: true } },
+  setup(props) {
+    return () => h('div', { class: ['decision-card', props.decision.status] }, [
+      h('div', { class: 'decision-title' }, '规则引擎决策'),
+      h('div', { class: 'decision-action' }, props.decision.action),
+      props.decision.target_position != null
+        ? h('div', { class: 'decision-meta' }, `目标仓位 ${(props.decision.target_position * 100).toFixed(0)}%`)
+        : null,
+      props.decision.confidence != null
+        ? h('div', { class: 'decision-meta' }, `置信度 ${props.decision.confidence}%`)
+        : null,
+      props.decision.blocking_reasons?.length
+        ? h('div', { class: 'decision-reasons' }, props.decision.blocking_reasons.join('；'))
+        : null,
+      h('div', { class: 'decision-version' }, `规则版本：${props.decision.rule_version}`),
+    ])
+  }
+})
 
 const ToolProgress = defineComponent({
   props: { items: { type: Array, default: () => [] } },
@@ -318,4 +346,24 @@ onMounted(loadHistory)
   max-height: 600px;
   overflow-y: auto;
 }
+
+.decision-card {
+  margin: 12px 0;
+  padding: 14px 16px;
+  border: 1px solid #dcdfe6;
+  border-left: 4px solid #409eff;
+  border-radius: 6px;
+  background: #f5f7fa;
+}
+
+.decision-card.degraded,
+.decision-card.blocked {
+  border-left-color: #e6a23c;
+  background: #fdf6ec;
+}
+
+.decision-title { font-size: 12px; color: #909399; }
+.decision-action { margin: 4px 0; font-size: 18px; font-weight: 600; }
+.decision-meta, .decision-version { display: inline-block; margin-right: 12px; font-size: 13px; color: #606266; }
+.decision-reasons { margin-top: 8px; font-size: 13px; color: #e6a23c; }
 </style>

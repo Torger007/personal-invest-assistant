@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     OPENAI_MODEL: str = "gpt-4o"
     OPENAI_BASE_URL: str = ""  # 留空用默认，代理/Azure时设置
 
+    # Agent rollout: when disabled, retain the deterministic fixed-plan path.
+    CONSTRAINED_AGENT_ENABLED: bool = True
+
     class Config:
         env_file = ".env"
 

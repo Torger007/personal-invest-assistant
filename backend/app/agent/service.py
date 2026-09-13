@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from app.agent.core import AgentCore
 from app.agent.planner import AgentPlanner
 from app.agent.prompt_loader import get_agent_system_prompt, render_agent_prompt
+from app.config import settings
 from app.services.portfolio_service import get_user_portfolio
 from app.models.agent import AgentAnalysis, AgentConversation, AgentMessage
 from app.utils.db import AsyncSessionLocal
@@ -90,6 +91,11 @@ class AgentService:
             plan=plan,
             trace_question=question,
             user_id=user_id,
+            planning_question=question,
+            planning_context={
+                "active_context": active_context,
+                "portfolio_fund_codes": portfolio_codes,
+            },
         ):
             if event["type"] == "complete":
                 event["conversation_id"] = conversation.id
@@ -123,6 +129,10 @@ class AgentService:
             plan=self.planner.plan_portfolio_analysis(),
             user_id=user_id,
             trace_question="组合自主分析",
+            planning_question="分析当前持仓基金组合",
+            planning_context={
+                "portfolio_fund_codes": [fund["code"] for fund in portfolio],
+            },
         ):
             yield event
 
@@ -133,16 +143,29 @@ class AgentService:
         plan,
         trace_question: str,
         user_id: str,
+        planning_question: str | None = None,
+        planning_context: dict[str, Any] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         core = AgentCore(user_id=user_id)
         start_time = time.time()
         try:
-            async for event in core.stream_planned(
-                prompt,
-                plan=plan,
-                system_prompt=get_agent_system_prompt(),
-                trace_question=trace_question,
-            ):
+            if settings.CONSTRAINED_AGENT_ENABLED:
+                event_stream = core.stream_constrained(
+                    prompt,
+                    planning_question=planning_question or trace_question,
+                    fallback_plan=plan,
+                    planning_context=planning_context or {},
+                    system_prompt=get_agent_system_prompt(),
+                    trace_question=trace_question,
+                )
+            else:
+                event_stream = core.stream_planned(
+                    prompt,
+                    plan=plan,
+                    system_prompt=get_agent_system_prompt(),
+                    trace_question=trace_question,
+                )
+            async for event in event_stream:
                 if event["type"] == "complete":
                     event["analysis_id"] = await self._save_analysis(
                         core=core,

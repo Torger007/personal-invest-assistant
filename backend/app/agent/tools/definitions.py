@@ -11,13 +11,17 @@ TOOL_DEFINITIONS = [
         "description": "获取指数历史行情数据（K线）",
         "input_schema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "index_code": {
                     "type": "string",
+                    "pattern": "^\\d{6}$",
                     "description": "指数代码，如 000001（上证）、399001（深证）、399006（创业板）"
                 },
                 "days": {
                     "type": "integer",
+                    "minimum": 1,
+                    "maximum": 365,
                     "description": "获取最近多少天数据，默认 30"
                 }
             },
@@ -29,13 +33,17 @@ TOOL_DEFINITIONS = [
         "description": "获取基金历史净值数据",
         "input_schema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "fund_code": {
                     "type": "string",
+                    "pattern": "^\\d{6}$",
                     "description": "基金代码，如 005827"
                 },
                 "days": {
                     "type": "integer",
+                    "minimum": 1,
+                    "maximum": 365,
                     "description": "获取最近多少天数据，默认 30"
                 }
             },
@@ -47,9 +55,11 @@ TOOL_DEFINITIONS = [
         "description": "获取基金基本信息",
         "input_schema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "fund_code": {
                     "type": "string",
+                    "pattern": "^\\d{6}$",
                     "description": "基金代码，如 005827"
                 }
             },
@@ -61,9 +71,11 @@ TOOL_DEFINITIONS = [
         "description": "对行情数据做技术分析（均线、MACD、RSI、量价等）",
         "input_schema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "data": {
                     "type": "array",
+                    "maxItems": 365,
                     "description": "K线数据数组，每项包含 date/open/high/low/close/volume",
                     "items": {
                         "type": "object",
@@ -86,9 +98,12 @@ TOOL_DEFINITIONS = [
         "description": "获取市场资金流向历史数据（主力资金、散户资金；北向资金字段可能因数据源限制为 0）",
         "input_schema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "days": {
                     "type": "integer",
+                    "minimum": 1,
+                    "maximum": 365,
                     "description": "获取最近多少天数据，默认 30"
                 }
             },
@@ -100,6 +115,7 @@ TOOL_DEFINITIONS = [
         "description": "读取用户当前持仓基金、名称和权重",
         "input_schema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {},
             "required": []
         }
@@ -109,13 +125,17 @@ TOOL_DEFINITIONS = [
         "description": "读取系统化建议引擎生成的最新结构化投资建议，可查询单只基金或整个持仓组合",
         "input_schema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "fund_code": {
                     "type": "string",
+                    "pattern": "^\\d{6}$",
                     "description": "基金代码。留空时返回当前持仓基金的最新建议"
                 },
                 "limit": {
                     "type": "integer",
+                    "minimum": 1,
+                    "maximum": 20,
                     "description": "返回历史建议条数。查询单只基金时生效，默认 1"
                 }
             },
@@ -127,6 +147,7 @@ TOOL_DEFINITIONS = [
         "description": "触发 deterministic 系统化建议生成器，为当前持仓基金生成或刷新结构化建议",
         "input_schema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {},
             "required": []
         }
@@ -136,6 +157,7 @@ TOOL_DEFINITIONS = [
         "description": "从数据库读取市场概览，包括主要指数最新点位、涨跌幅和最新资金流",
         "input_schema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {},
             "required": []
         }
@@ -145,6 +167,7 @@ TOOL_DEFINITIONS = [
         "description": "读取板块轮动趋势分析，支持概念板块或行业板块",
         "input_schema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "sector_type": {
                     "type": "string",
@@ -153,6 +176,8 @@ TOOL_DEFINITIONS = [
                 },
                 "limit": {
                     "type": "integer",
+                    "minimum": 1,
+                    "maximum": 200,
                     "description": "分析排名靠前的板块数量，默认 50"
                 }
             },
@@ -164,9 +189,11 @@ TOOL_DEFINITIONS = [
         "description": "基于持仓权重和最新结构化建议横向比较多只基金",
         "input_schema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "fund_codes": {
                     "type": "array",
+                    "maxItems": 20,
                     "description": "要比较的基金代码列表。留空时比较当前持仓基金",
                     "items": {"type": "string"}
                 }
@@ -179,6 +206,7 @@ TOOL_DEFINITIONS = [
         "description": "读取 LLM Agent 历史分析和问答记录，帮助引用历史判断",
         "input_schema": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "analysis_type": {
                     "type": "string",
@@ -187,6 +215,8 @@ TOOL_DEFINITIONS = [
                 },
                 "limit": {
                     "type": "integer",
+                    "minimum": 1,
+                    "maximum": 50,
                     "description": "返回条数，默认 5"
                 }
             },

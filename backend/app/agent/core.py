@@ -4,6 +4,7 @@ Agent Core
 负责对话管理和工具调用循环。
 实现 LLM 与工具的交互闭环：LLM 决定调用工具 → 执行工具 → 结果回传 LLM → 直到给出最终回答。
 """
+import asyncio
 import json
 import logging
 import time
@@ -11,8 +12,14 @@ from copy import deepcopy
 from typing import Any, AsyncIterator, List, Dict
 
 from app.agent.providers import create_provider, LLMResponse
+from app.agent.contracts import QualityStatus
+from app.agent.execution_engine import ExecutionEngine
+from app.agent.orchestrator import ConstrainedAgentOrchestrator
+from app.agent.plan_provider import ConstrainedPlanProvider
 from app.agent.planner import ToolPlan
+from app.agent.policy import get_tool_policy
 from app.agent.tools import tool_registry
+from app.services.decision_service import decision_service
 
 logger = logging.getLogger(__name__)
 
@@ -217,6 +224,109 @@ class AgentCore:
         })
         yield {"type": "complete", "answer": content, "llm_stream": generation_metrics}
 
+    async def stream_constrained(
+        self,
+        user_input: str,
+        planning_question: str,
+        fallback_plan: ToolPlan,
+        planning_context: dict[str, Any],
+        system_prompt: str | None = None,
+        trace_question: str | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Run bounded planning and explain only validated facts and decisions."""
+        self.conversation.append({"role": "user", "content": user_input})
+        queued_events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+        async def emit(event: dict[str, Any]) -> None:
+            await queued_events.put(event)
+
+        allowed_tools = [
+            name for name in self.tools.get_tool_names()
+            if (policy := get_tool_policy(name)) and policy.llm_plannable
+        ]
+        runner = ConstrainedAgentOrchestrator(
+            ConstrainedPlanProvider(provider=self.llm),
+            ExecutionEngine(self.tools),
+        )
+        run_task = asyncio.create_task(runner.run(
+            planning_question,
+            self.user_id or "",
+            {**planning_context, "allowed_tools": allowed_tools},
+            fallback_plan,
+            emit,
+        ))
+
+        while not run_task.done() or not queued_events.empty():
+            try:
+                event = await asyncio.wait_for(queued_events.get(), timeout=0.1)
+            except asyncio.TimeoutError:
+                continue
+            yield event
+
+        run = await run_task
+        decision = None
+        if run.plans and run.plans[-1].intent == "single_fund":
+            decision = decision_service.build_single_fund_decision(run.results, run.quality)
+            event_type = "decision_ready" if decision.status == "ready" else "degraded"
+            yield {"type": event_type, "decision": decision.model_dump(mode="json")}
+        elif run.quality.status is not QualityStatus.READY:
+            yield {"type": "degraded", "quality": run.quality.model_dump(mode="json")}
+
+        self.execution_trace = {
+            "question": trace_question or planning_question,
+            "intent": run.plans[-1].intent if run.plans else fallback_plan.intent,
+            "plans": [plan.model_dump(mode="json") for plan in run.plans],
+            "tools": [
+                self._build_tool_trace(item["tool_name"], item["arguments"], item["result"], 0)
+                for item in run.results
+            ],
+            "quality": run.quality.model_dump(mode="json"),
+            "decision": decision.model_dump(mode="json") if decision else None,
+            "fallback_used": run.fallback_used,
+        }
+
+        yield {"type": "summarizing"}
+        answer_parts: list[str] = []
+        generation_start = time.perf_counter()
+        first_token_ms: int | None = None
+        chunk_count = 0
+        async for text in self.llm.stream_chat(
+            messages=[{
+                "role": "user",
+                "content": self._build_constrained_summary_input(
+                    user_input,
+                    run.results,
+                    run.quality.model_dump(mode="json"),
+                    decision.model_dump(mode="json") if decision else None,
+                ),
+            }],
+            tools=None,
+            system_prompt=system_prompt,
+        ):
+            chunk_count += 1
+            elapsed_ms = round((time.perf_counter() - generation_start) * 1000)
+            if first_token_ms is None:
+                first_token_ms = elapsed_ms
+            answer_parts.append(text)
+            yield {
+                "type": "token", "content": text, "chunk_index": chunk_count,
+                "elapsed_ms": elapsed_ms,
+            }
+
+        content = "".join(answer_parts) or "分析完成，但未生成有效回答。"
+        generation_metrics = {
+            "first_token_ms": first_token_ms,
+            "duration_ms": round((time.perf_counter() - generation_start) * 1000),
+            "chunk_count": chunk_count,
+        }
+        self.conversation.append({"role": "assistant", "content": content})
+        self.execution_trace.update({
+            "final_answer": content,
+            "llm_stream": generation_metrics,
+            **self.get_provider_info(),
+        })
+        yield {"type": "complete", "answer": content, "llm_stream": generation_metrics}
+
     @staticmethod
     def _build_tool_trace(
         tool_name: str,
@@ -271,6 +381,27 @@ class AgentCore:
         return (
             f"用户问题：\n{user_input}\n\n"
             "以下数据已由确定性计划获取。只基于这些数据综合回答，不要调用工具、不要编造缺失信息。\n"
+            f"{json.dumps(payload, ensure_ascii=False, default=str)}"
+        )
+
+    @staticmethod
+    def _build_constrained_summary_input(
+        user_input: str,
+        results: list[dict[str, Any]],
+        quality: dict[str, Any],
+        decision: dict[str, Any] | None,
+    ) -> str:
+        payload = {
+            "tool_results": results,
+            "quality_report": quality,
+            "decision_artifact": decision,
+        }
+        return (
+            f"用户问题：\n{user_input}\n\n"
+            "以下数据由受约束计划获取并经过服务端质量校验。"
+            "只基于这些事实回答，不得调用工具，不得编造数据。"
+            "若存在 decision_artifact，投资动作、目标仓位和置信度必须原样引用，"
+            "不得新增、删除或改写；若其 status 不是 ready，只能解释为何暂不建议操作。\n"
             f"{json.dumps(payload, ensure_ascii=False, default=str)}"
         )
 
