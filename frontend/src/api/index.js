@@ -73,6 +73,7 @@ export const fundApi = {
   getList: () => api.get('/funds/'),
   getOptions: () => api.get('/funds/options'),
   search: (keyword) => api.get('/funds/search', { params: { keyword } }),
+  verify: (fundCode) => api.get(`/funds/catalog/${encodeURIComponent(fundCode)}/verify`),
   create: (payload) => api.post('/funds/', payload),
   getDetail: (positionId) => api.get(`/funds/${positionId}`),
   calibrate: (positionId, payload) => api.put(`/funds/${positionId}/calibration`, payload),

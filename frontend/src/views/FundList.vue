@@ -64,7 +64,7 @@
               <button v-for="item in pickerFunds" :key="item.code" type="button" class="picker-option" @click="selectFund(item)">
                 <span>{{ item.name }}</span><small>{{ item.code }}</small>
               </button>
-              <el-empty v-if="!searching && !pickerFunds.length" :image-size="56" :description="fundSearchKeyword ? '未找到匹配的基金' : '暂无已持有基金，请搜索添加'" />
+              <el-empty v-if="!searching && !pickerFunds.length" :image-size="56" :description="emptyFundPickerText" />
             </div>
           </section>
         </el-popover>，市值
@@ -147,10 +147,12 @@ const heldFundOptions = ref([])
 const fundPickerVisible = ref(false)
 const fundSearchKeyword = ref('')
 const searching = ref(false)
+const catalogInitialized = ref(true)
 const saving = ref(false)
 const chartRef = ref(null)
 let chart = null
 let fundSearchTimer = null
+let fundSearchRequest = 0
 const platforms = ['支付宝', '天天基金', '银行', '券商', '微信理财通', '其他']
 const form = reactive({ fund: null, platform: '', marketValue: undefined, holdingProfit: undefined, shares: undefined, remark: '' })
 const todayLabel = computed(() => new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric' }).format(new Date()))
@@ -179,6 +181,10 @@ function openCalibration(position) {
   calibrationVisible.value = true
 }
 const pickerFunds = computed(() => fundSearchKeyword.value.trim() ? searchResults.value : heldFundOptions.value)
+const emptyFundPickerText = computed(() => {
+  if (!fundSearchKeyword.value.trim()) return '暂无已持有基金，请搜索添加'
+  return catalogInitialized.value ? '未找到匹配的基金' : '基金目录正在初始化，请稍后重试'
+})
 async function loadHeldFundOptions() {
   if (editingPosition.value) return
   fundSearchKeyword.value = ''
@@ -188,16 +194,31 @@ async function loadHeldFundOptions() {
 }
 function onFundSearch(keyword) {
   clearTimeout(fundSearchTimer)
-  if (!keyword?.trim()) { searchResults.value = []; return }
+  if (!keyword?.trim()) { fundSearchRequest += 1; searchResults.value = []; catalogInitialized.value = true; return }
   fundSearchTimer = setTimeout(() => searchFunds(keyword), 250)
 }
 async function searchFunds(keyword) {
+  const requestId = ++fundSearchRequest
   searching.value = true
-  try { searchResults.value = (await fundApi.search(keyword.trim())).data.funds || [] } catch { ElMessage.error('基金搜索失败，请稍后重试') } finally { searching.value = false }
+  try {
+    const { data } = await fundApi.search(keyword.trim())
+    if (requestId !== fundSearchRequest) return
+    searchResults.value = data.funds || []
+    catalogInitialized.value = data.catalog_initialized !== false
+  } catch {
+    if (requestId === fundSearchRequest) ElMessage.error('本地基金目录查询失败，请稍后重试')
+  } finally { if (requestId === fundSearchRequest) searching.value = false }
 }
-function selectFund(fund) {
+async function selectFund(fund) {
   form.fund = { code: fund.code, name: fund.name }
   fundPickerVisible.value = false
+  try {
+    const { data } = await fundApi.verify(fund.code)
+    if (data.verified) form.fund = { code: data.code, name: data.name }
+    else ElMessage.warning(data.message || '已使用本地基金目录信息')
+  } catch {
+    ElMessage.warning('基金信息核验失败，已使用本地基金目录信息')
+  }
 }
 async function savePosition() {
   if (!form.fund || !form.platform || !form.marketValue || form.holdingProfit === undefined || !form.shares) { ElMessage.warning('请完整填写基金、市值、收益、份额和平台'); return }

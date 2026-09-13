@@ -7,7 +7,9 @@
 """
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 import asyncio
+from datetime import datetime, timedelta
 
 from app.utils.db import AsyncSessionLocal
 from app.services.data_collector.akshare_source import AkShareSource
@@ -15,6 +17,7 @@ from app.services.data_collector.storage import DataStorage
 from app.portfolio import get_portfolio_info
 from app.models.user import User
 from app.config import settings
+from app.services.data_collector.fund_catalog import sync_fund_catalog, sync_fund_catalog_if_empty
 from sqlalchemy import select
 
 
@@ -261,6 +264,26 @@ def setup_scheduler():
         ),
         id="daily_update",
         replace_existing=True
+    )
+    # 基金代码/名称目录变化频率低，周更即可。下载失败不会影响本地搜索。
+    scheduler.add_job(
+        sync_fund_catalog,
+        CronTrigger(
+            day_of_week="sun",
+            hour=3,
+            minute=0,
+            timezone=settings.SCHEDULER_TIMEZONE,
+        ),
+        id="weekly_fund_catalog_sync",
+        replace_existing=True,
+    )
+    # Fresh deployments have no CSV seed. Start an asynchronous bootstrap after
+    # the scheduler starts, and skip it immediately when a catalog already exists.
+    scheduler.add_job(
+        sync_fund_catalog_if_empty,
+        DateTrigger(run_date=datetime.now() + timedelta(seconds=2)),
+        id="bootstrap_fund_catalog_sync",
+        replace_existing=True,
     )
 
 

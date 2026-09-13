@@ -10,11 +10,11 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
-from app.models.fund import FundNav
+from app.models.fund import Fund, FundNav
 from app.models.user import User, UserFundPosition
 from app.services.data_collector.akshare_source import AkShareSource
 from app.services.data_collector.storage import DataStorage
@@ -111,17 +111,37 @@ async def _get_owned_position(db: AsyncSession, user_id: str, position_id: str) 
 
 
 @router.get("/search")
-async def search_funds(keyword: str = Query(min_length=1, max_length=100)):
-    """Searches a provider only to let the user choose a holding to add."""
-    source = AkShareSource()
-    query = keyword.strip().lower()
-    candidates = await asyncio.to_thread(source.get_fund_list)
-    matches = [
-        {"code": item["code"], "name": item["name"]}
-        for item in candidates
-        if query in item["code"].lower() or query in item["name"].lower()
-    ]
-    return {"funds": matches[:20]}
+async def search_funds(
+    keyword: str = Query(min_length=1, max_length=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """Search the local catalog only; never make a provider call per keystroke."""
+    query = keyword.strip()
+    initialized = bool(await db.scalar(
+        select(func.count()).select_from(Fund).where(Fund.is_active.is_(True))
+    ))
+    if not query or not initialized:
+        return {"funds": [], "catalog_initialized": initialized}
+
+    # Treat percent and underscore as user text rather than SQL wildcards.
+    escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    code_prefix = f"{escaped}%"
+    name_contains = f"%{escaped}%"
+    code_matches = Fund.code.like(code_prefix, escape="\\")
+    rows = (await db.execute(
+        select(Fund)
+        .where(Fund.is_active.is_(True))
+        .where(or_(code_matches, Fund.name.ilike(name_contains, escape="\\")))
+        .order_by(case((code_matches, 0), else_=1), Fund.code)
+        .limit(20)
+    )).scalars().all()
+    return {
+        "funds": [
+            {"code": fund.code, "name": fund.name, "type": fund.type or ""}
+            for fund in rows
+        ],
+        "catalog_initialized": True,
+    }
 
 
 @router.get("/options")
@@ -142,6 +162,33 @@ async def get_fund_options(
         seen_codes.add(position.fund_code)
         funds.append({"code": position.fund_code, "name": position.fund_name})
     return {"funds": funds}
+
+
+@router.get("/catalog/{fund_code}/verify")
+async def verify_catalog_fund(
+    fund_code: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Best-effort metadata refresh after a local search result is selected."""
+    fund = await db.get(Fund, fund_code.strip())
+    if not fund or not fund.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="基金不在本地目录中")
+
+    info = await asyncio.to_thread(AkShareSource().get_fund_info, fund.code)
+    if info.get("name"):
+        fund.name = info["name"]
+        if info.get("type"):
+            fund.type = info["type"]
+        await db.commit()
+        return {
+            "code": fund.code, "name": fund.name, "type": fund.type or "",
+            "verified": True,
+        }
+    return {
+        "code": fund.code, "name": fund.name, "type": fund.type or "",
+        "verified": False,
+        "message": "上游信息暂不可用，已使用本地基金目录",
+    }
 
 
 @router.get("/")
