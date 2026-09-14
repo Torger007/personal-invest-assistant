@@ -12,6 +12,7 @@ from uuid import uuid4
 from sqlalchemy import func, select
 
 from app.agent.core import AgentCore
+from app.agent.metrics import aggregate_run_metrics
 from app.agent.planner import AgentPlanner
 from app.agent.prompt_loader import get_agent_system_prompt, render_agent_prompt
 from app.config import settings
@@ -436,6 +437,18 @@ class AgentService:
                 }
                 for a in analyses
             ]
+
+    async def get_agent_metrics(self, user_id: str, days: int = 7) -> dict:
+        """Aggregate the requesting user's persisted, privacy-safe run metrics."""
+        days = max(1, min(days, 90))
+        cutoff = datetime.now() - timedelta(days=days)
+        async with AsyncSessionLocal() as session:
+            traces = list((await session.execute(
+                select(AgentAnalysis.tool_calls)
+                .where(AgentAnalysis.user_id == user_id)
+                .where(AgentAnalysis.created_at >= cutoff)
+            )).scalars().all())
+        return aggregate_run_metrics(traces, days)
 
 
 # 全局 Agent Service 实例

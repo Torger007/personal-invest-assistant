@@ -159,6 +159,15 @@ async def get_history(limit: int = 10, user: User = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/metrics")
+async def get_metrics(days: int = 7, user: User = Depends(get_current_user)):
+    """Return aggregated runtime metrics for the authenticated user's runs."""
+    try:
+        return await agent_service.get_agent_metrics(user.id, days)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 def _encode_sse(event: dict) -> str:
     return f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
 

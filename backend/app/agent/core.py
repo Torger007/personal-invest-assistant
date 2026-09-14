@@ -14,6 +14,7 @@ from typing import Any, AsyncIterator, List, Dict
 from app.agent.providers import create_provider, LLMResponse
 from app.agent.contracts import QualityStatus
 from app.agent.execution_engine import ExecutionEngine
+from app.agent.metrics import build_run_metrics
 from app.agent.orchestrator import ConstrainedAgentOrchestrator
 from app.agent.plan_provider import ConstrainedPlanProvider
 from app.agent.planner import ToolPlan
@@ -234,6 +235,7 @@ class AgentCore:
         trace_question: str | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Run bounded planning and explain only validated facts and decisions."""
+        run_started = time.perf_counter()
         self.conversation.append({"role": "user", "content": user_input})
         queued_events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
 
@@ -277,7 +279,9 @@ class AgentCore:
             "intent": run.plans[-1].intent if run.plans else fallback_plan.intent,
             "plans": [plan.model_dump(mode="json") for plan in run.plans],
             "tools": [
-                self._build_tool_trace(item["tool_name"], item["arguments"], item["result"], 0)
+                self._build_tool_trace(
+                    item["tool_name"], item["arguments"], item["result"], item["duration_ms"],
+                )
                 for item in run.results
             ],
             "quality": run.quality.model_dump(mode="json"),
@@ -323,6 +327,15 @@ class AgentCore:
         self.execution_trace.update({
             "final_answer": content,
             "llm_stream": generation_metrics,
+            "metrics": build_run_metrics(
+                results=run.results,
+                plan_count=len(run.plans),
+                fallback_used=run.fallback_used,
+                quality=run.quality.model_dump(mode="json"),
+                decision=decision.model_dump(mode="json") if decision else None,
+                total_duration_ms=round((time.perf_counter() - run_started) * 1000),
+                llm_stream=generation_metrics,
+            ),
             **self.get_provider_info(),
         })
         yield {"type": "complete", "answer": content, "llm_stream": generation_metrics}

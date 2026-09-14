@@ -2,7 +2,7 @@ import asyncio
 import json
 from types import SimpleNamespace
 
-from app.api.agent import ChatRequest, _encode_sse, _events_with_generation_status, chat
+from app.api.agent import ChatRequest, _encode_sse, _events_with_generation_status, chat, get_metrics
 from app.agent.service import agent_service
 
 
@@ -65,3 +65,19 @@ async def test_generation_status_emits_error_when_source_stream_crashes():
     events = [event async for event in _events_with_generation_status(failing_stream())]
 
     assert events == [{"type": "error", "message": "问答服务异常：upstream unavailable"}]
+
+
+async def test_metrics_endpoint_uses_authenticated_user_scope():
+    async def fake_metrics(user_id, days):
+        assert user_id == "user-1"
+        assert days == 14
+        return {"period_days": 14, "run_count": 2}
+
+    original_metrics = agent_service.get_agent_metrics
+    agent_service.get_agent_metrics = fake_metrics
+    try:
+        result = await get_metrics(14, SimpleNamespace(id="user-1"))
+    finally:
+        agent_service.get_agent_metrics = original_metrics
+
+    assert result == {"period_days": 14, "run_count": 2}

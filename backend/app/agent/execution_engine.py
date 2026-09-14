@@ -40,6 +40,7 @@ class ExecutionEngine:
             dependency_failure = self._dependency_failure(step.depends_on, result_by_step)
             if dependency_failure:
                 result = self._dependency_error(dependency_failure)
+                duration_ms = 0
             else:
                 await self._emit(emit, {
                     "type": "tool_started", "step_id": step.id,
@@ -73,6 +74,7 @@ class ExecutionEngine:
                 "tool_name": step.tool,
                 "arguments": arguments,
                 "result": result,
+                "duration_ms": duration_ms,
             }
             results.append(item)
             result_by_step[step.id] = result

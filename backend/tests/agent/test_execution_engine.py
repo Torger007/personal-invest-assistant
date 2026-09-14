@@ -57,6 +57,7 @@ async def test_engine_resolves_step_references_and_emits_progress():
         "tool_started", "tool_completed", "tool_started", "tool_completed",
     ]
     assert execution.results[1]["step_id"] == "technical"
+    assert isinstance(execution.results[0]["duration_ms"], int)
 
 
 async def test_engine_skips_a_step_when_its_dependency_failed():
@@ -73,3 +74,4 @@ async def test_engine_skips_a_step_when_its_dependency_failed():
 
     assert len(registry.calls) == 1
     assert execution.results[1]["result"]["error_code"] == "dependency_failed"
+    assert execution.results[1]["duration_ms"] == 0

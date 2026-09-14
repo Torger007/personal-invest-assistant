@@ -89,3 +89,5 @@ async def test_constrained_core_emits_rule_decision_and_hides_tools_from_summary
     assert events[-1]["answer"] == "受规则约束的解释"
     assert '"action": "持有观望"' in core.llm.summary_input
     assert core.get_execution_trace()["decision"]["target_position"] == 0.3
+    assert core.get_execution_trace()["metrics"]["tool_count"] == 3
+    assert core.get_execution_trace()["metrics"]["first_token_ms"] is not None
