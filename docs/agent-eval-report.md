@@ -1,7 +1,7 @@
 # Agent 离线评测报告
 
 - 评测模式：离线 Fixture Planner / Fixture Registry
-- 生成日期：2026-09-13
+- 生成日期：2026-09-14
 - 用例数量：20
 - 覆盖类别：fallback、followup、history、market、missing_data、normal、portfolio、replan、sector、security、tool_error
 
