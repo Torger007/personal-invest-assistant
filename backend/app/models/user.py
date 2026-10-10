@@ -33,18 +33,6 @@ class UserSession(Base):
     ip_address = Column(String(64))
 
 
-class UserPortfolioItem(Base):
-    __tablename__ = "user_portfolio_items"
-
-    id = Column(String(36), primary_key=True)
-    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
-    fund_code = Column(String(10), nullable=False)
-    fund_name = Column(String(100), nullable=False)
-    weight = Column(String(20), nullable=False)
-    created_at = Column(DateTime, default=func.now(), nullable=False)
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
-
-
 class UserFundPosition(Base):
     """A user's calibrated holding on one fund platform."""
     __tablename__ = "user_fund_positions"

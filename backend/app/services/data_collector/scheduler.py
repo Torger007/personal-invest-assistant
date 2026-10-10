@@ -14,14 +14,27 @@ from datetime import datetime, timedelta
 from app.utils.db import AsyncSessionLocal
 from app.services.data_collector.akshare_source import AkShareSource
 from app.services.data_collector.storage import DataStorage
-from app.portfolio import get_portfolio_info
 from app.models.user import User
 from app.config import settings
 from app.services.data_collector.fund_catalog import sync_fund_catalog, sync_fund_catalog_if_empty
+from app.services.portfolio_service import get_user_portfolio
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 scheduler = AsyncIOScheduler()
+
+
+async def get_active_portfolio_fund_codes(session: AsyncSession) -> list[str]:
+    """Collect each active user's portfolio funds, fetching shared funds once."""
+    user_ids = (await session.execute(
+        select(User.id).where(User.is_active.is_(True))
+    )).scalars().all()
+    codes: dict[str, None] = {}
+    for user_id in user_ids:
+        for fund in await get_user_portfolio(session, user_id):
+            codes[fund["code"]] = None
+    return list(codes)
 
 
 async def _legacy_daily_data_update():
@@ -39,7 +52,6 @@ async def _legacy_daily_data_update():
     print("[调度器] 开始每日数据更新...")
 
     source = AkShareSource()
-    portfolio = get_portfolio_info()
     async with AsyncSessionLocal() as session:
         storage = DataStorage(session)
         try:
@@ -59,9 +71,9 @@ async def _legacy_daily_data_update():
                 print(f"  更新 {len(flow_data)} 条数据")
 
             # 3. 更新持仓基金信息 + 净值
-            print(f"[调度器] 3/4 更新持仓基金 ({len(portfolio)}只)...")
-            for fund in portfolio:
-                code = fund["code"]
+            fund_codes = await get_active_portfolio_fund_codes(session)
+            print(f"[调度器] 3/4 更新持仓基金 ({len(fund_codes)}只)...")
+            for code in fund_codes:
                 info = await asyncio.to_thread(source.get_fund_info, code)
                 if info and info.get("name"):
                     await storage.save_fund_info(info)
@@ -128,8 +140,6 @@ async def daily_data_update():
         "stages": {},
     }
     source = AkShareSource()
-    portfolio = get_portfolio_info()
-
     async def run_stage(name, operation):
         try:
             details = await operation()
@@ -171,8 +181,8 @@ async def daily_data_update():
         async def update_funds():
             nav_records = 0
             warnings = []
-            for fund in portfolio:
-                code = fund["code"]
+            fund_codes = await get_active_portfolio_fund_codes(session)
+            for code in fund_codes:
                 info = await asyncio.to_thread(source.get_fund_info, code)
                 if info and info.get("name"):
                     await storage.save_fund_info(info)

@@ -4,7 +4,8 @@ from decimal import Decimal
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.models.user import UserFundPosition, UserPortfolioItem
+from app.models.user import User, UserFundPosition
+from app.services.data_collector.scheduler import get_active_portfolio_fund_codes
 from app.services.portfolio_service import get_user_portfolio
 from app.utils.db import Base
 
@@ -36,14 +37,11 @@ def make_position(position_id, code, name, platform, market_value):
     )
 
 
-async def test_real_positions_are_aggregated_and_override_legacy_weights(db_session):
+async def test_real_positions_are_aggregated_by_fund_code(db_session):
     db_session.add_all([
         make_position("one", "008163", "南方标普红利低波50ETF联接A", "支付宝", "2140.46"),
         make_position("two", "008163", "南方标普红利低波50ETF联接A", "银行", "100.00"),
         make_position("three", "005827", "易方达蓝筹精选混合", "支付宝", "259.54"),
-        UserPortfolioItem(
-            id="legacy", user_id="user-1", fund_code="legacy", fund_name="旧配置", weight="1",
-        ),
     ])
     await db_session.commit()
 
@@ -56,12 +54,34 @@ async def test_real_positions_are_aggregated_and_override_legacy_weights(db_sess
     assert portfolio[1]["weight"] == 0.103816
 
 
-async def test_legacy_portfolio_is_used_only_when_no_real_position_exists(db_session):
-    db_session.add(UserPortfolioItem(
-        id="legacy", user_id="user-1", fund_code="008163", fund_name="旧配置", weight="0.4",
-    ))
+async def test_user_without_positions_has_empty_portfolio(db_session):
+    assert await get_user_portfolio(db_session, "user-1") == []
+
+
+async def test_scheduled_fund_codes_follow_active_users_portfolios(db_session):
+    db_session.add_all([
+        User(id="user-1", username="one", password_hash="test", is_active=True),
+        User(id="user-2", username="two", password_hash="test", is_active=True),
+        User(id="user-3", username="inactive", password_hash="test", is_active=False),
+        User(id="user-4", username="empty", password_hash="test", is_active=True),
+    ])
+    first = make_position("first", "111111", "基金一", "支付宝", "100")
+    second_platform = make_position("second", "111111", "基金一", "银行", "200")
+    shared = make_position("shared", "111111", "基金一", "券商", "300")
+    shared.user_id = "user-2"
+    other = make_position("other", "222222", "基金二", "支付宝", "100")
+    other.user_id = "user-2"
+    inactive = make_position("inactive", "333333", "基金三", "支付宝", "100")
+    inactive.user_id = "user-3"
+    db_session.add_all([
+        first, second_platform, shared, other, inactive,
+    ])
     await db_session.commit()
 
-    assert await get_user_portfolio(db_session, "user-1") == [
-        {"code": "008163", "name": "旧配置", "weight": 0.4},
-    ]
+    codes = await get_active_portfolio_fund_codes(db_session)
+    assert set(codes) == {"111111", "222222"}
+    assert len(codes) == 2
+
+    db_session.add(make_position("new", "555555", "新增基金", "支付宝", "100"))
+    await db_session.commit()
+    assert "555555" in await get_active_portfolio_fund_codes(db_session)
