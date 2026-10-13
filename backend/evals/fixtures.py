@@ -51,6 +51,8 @@ class FixtureRegistry:
         index = min(self._offsets[tool_name], len(variants) - 1)
         self._offsets[tool_name] += 1
         response = deepcopy(variants[index])
+        if response.get("freshness_policy") and not response.get("as_of"):
+            raise ValueError(f"评测工具 {tool_name} 设置了时效策略但缺少 as_of")
         return {
             "status": response.get("status", "success"),
             "data": response.get("data", {}),
@@ -58,7 +60,7 @@ class FixtureRegistry:
             "message": response.get("message"),
             "error": response.get("error"),
             "error_code": response.get("error_code"),
-            "as_of": response.get("as_of", "2026-09-12"),
+            "as_of": response.get("as_of"),
             "freshness_policy": response.get("freshness_policy"),
             "fetched_at": "offline-eval",
             "completeness": response.get("completeness", 1.0),

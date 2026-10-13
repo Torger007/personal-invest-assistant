@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -15,11 +16,17 @@ from evals.fixtures import FixturePlanProvider, FixtureRegistry
 from evals.report import render_report
 
 
+DEFAULT_EVALUATION_DATE = date(2026, 9, 14)
+
+
 def load_cases(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 async def evaluate_case(case: dict[str, Any]) -> dict[str, Any]:
+    evaluation_date = date.fromisoformat(
+        case.get("evaluation_date", DEFAULT_EVALUATION_DATE.isoformat())
+    )
     fixture_planner = FixturePlanProvider(case["planner_responses"])
     registry = FixtureRegistry(case.get("tool_responses", {}))
     question = case["question"]
@@ -36,6 +43,7 @@ async def evaluate_case(case: dict[str, Any]) -> dict[str, Any]:
             "active_context": user_context.get("active_context", {}),
         },
         fallback,
+        assessment_date=evaluation_date,
     )
     decision = None
     if run.plans and run.plans[-1].intent == "single_fund":
@@ -54,6 +62,7 @@ async def evaluate_case(case: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": case["id"],
         "category": case["category"],
+        "evaluation_date": evaluation_date.isoformat(),
         "expected": case.get("expected", {}),
         "passed": not failures,
         "failures": failures,

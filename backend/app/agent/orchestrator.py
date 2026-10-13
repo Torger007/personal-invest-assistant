@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from typing import Any, Awaitable, Callable
 
 from app.agent.contracts import AgentPlan, QualityReport, QualityStatus
@@ -104,6 +105,8 @@ class ConstrainedAgentOrchestrator:
         context: dict[str, Any],
         fallback_plan: ToolPlan,
         emit: EventCallback | None = None,
+        *,
+        assessment_date: date | None = None,
     ) -> ConstrainedRun:
         all_results: list[dict[str, Any]] = []
         plans: list[AgentPlan] = []
@@ -123,7 +126,8 @@ class ConstrainedAgentOrchestrator:
                     })
                 else:
                     quality = self.quality_gate.assess(
-                        fallback_plan.intent, all_results, allow_replan=False,
+                        fallback_plan.intent, all_results,
+                        today=assessment_date, allow_replan=False,
                     )
                     quality.reasons.append(f"重规划失败：{error}")
                     return ConstrainedRun(plans, all_results, quality, fallback_used)
@@ -137,7 +141,8 @@ class ConstrainedAgentOrchestrator:
             execution = await self.engine.execute(plan, user_id, emit)
             all_results.extend(execution.results)
             quality = self.quality_gate.assess(
-                plan.intent, all_results, allow_replan=attempt < MAX_REPLANS,
+                plan.intent, all_results,
+                today=assessment_date, allow_replan=attempt < MAX_REPLANS,
             )
             await self._emit(emit, {
                 "type": "quality_checked", "status": quality.status.value,
@@ -168,7 +173,10 @@ class ConstrainedAgentOrchestrator:
         # The loop always returns above; retain a defensive degradation path.
         return ConstrainedRun(
             plans, all_results,
-            self.quality_gate.assess(fallback_plan.intent, all_results, allow_replan=False),
+            self.quality_gate.assess(
+                fallback_plan.intent, all_results,
+                today=assessment_date, allow_replan=False,
+            ),
             fallback_used,
         )
 

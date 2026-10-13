@@ -28,10 +28,12 @@ def render_report(summary: dict[str, Any], results: list[dict[str, Any]]) -> str
         for result in failed
     ) or "| 无 | - |"
     categories = "、".join(sorted({result["category"] for result in results}))
+    evaluation_dates = "、".join(sorted({result["evaluation_date"] for result in results}))
     return f"""# Agent 离线评测报告
 
 - 评测模式：离线 Fixture Planner / Fixture Registry
 - 生成日期：{date.today().isoformat()}
+- 评测基准日：{evaluation_dates}
 - 用例数量：{summary['case_count']}
 - 覆盖类别：{categories}
 
