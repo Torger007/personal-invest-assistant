@@ -5,13 +5,18 @@ import json
 import re
 from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
 from app.agent.contracts import (
-    PortfolioReviewAsOf, PortfolioReviewResult, QualityStatus,
+    EvidenceSnapshot, PortfolioReviewAsOf, PortfolioReviewResult, QualityStatus,
 )
-from app.agent.evidence import collect_evidence_candidates, select_evidence_snapshot
+from app.agent.evidence import (
+    collect_evidence_candidates, select_evidence_snapshot, select_saved_evidence_snapshot,
+)
 from app.agent.orchestrator import ConstrainedRun
 from app.agent.skills.registry import SkillDefinition
+from app.agent.skills.portfolio_review.comparison import build_verified_changes, extract_snapshots
+from app.services.decision_service import decision_service
 
 
 MAX_PROMPT_EVIDENCE = 250
@@ -61,13 +66,38 @@ class PortfolioReviewResultBuilder:
     async def generate(
         self, run: ConstrainedRun, skill: SkillDefinition,
         *, previous: dict[str, Any] | None = None,
+        preference: dict[str, Any] | None = None,
+        review_id: str | None = None,
     ) -> tuple[PortfolioReviewResult, list[dict[str, Any]]]:
         as_of = review_as_of(run.results)
         current = collect_evidence_candidates(run.results)
+        metadata = EvidenceSnapshot(
+            evidence_id=f"ev_review_meta:{review_id or uuid4().hex}",
+            source="agent_runtime", source_ref=f"portfolio_review_run:{review_id or 'unpersisted'}",
+            as_of=as_of.run_at.isoformat(), read_at=as_of.run_at.isoformat(),
+            unit="version;status", calculation_basis="server_config_and_quality",
+            status="success",
+            values={
+                "rule_version": decision_service.RULE_VERSION,
+                "quality_status": run.quality.status.value,
+                "preference_version": (preference or {}).get("version"),
+            },
+        ).model_dump(mode="json")
+        current.append(metadata)
         previous_facts = (previous or {}).get("evidence") or []
         previous_ids = {fact["evidence_id"] for fact in previous_facts}
         current_ids = {fact["evidence_id"] for fact in current}
-        prompt_facts = current[:MAX_PROMPT_EVIDENCE]
+        prompt_facts = current[:MAX_PROMPT_EVIDENCE - 1] + [metadata]
+        snapshots = extract_snapshots(run.results)
+        verified_changes = []
+        comparison_gaps: list[str] = []
+        if previous:
+            verified_changes, comparison_gaps = build_verified_changes(
+                snapshots, previous, current, previous_facts,
+                current_rule_version=decision_service.RULE_VERSION,
+                current_quality=run.quality.status.value,
+                current_as_of=as_of.run_at.isoformat(),
+            )
         tool = {
             "name": "submit_portfolio_review",
             "description": "提交结构化持仓复盘。只能引用给定证据 ID。",
@@ -77,11 +107,15 @@ class PortfolioReviewResultBuilder:
             "quality": run.quality.model_dump(mode="json"),
             "as_of": as_of.model_dump(mode="json"),
             "evidence": prompt_facts,
-            "previous": previous,
+            "previous": {**previous, "evidence": previous_facts[:MAX_PROMPT_EVIDENCE]} if previous else None,
+            "verified_changes": [change.model_dump(mode="json") for change in verified_changes],
+            "confirmed_preference": preference,
             "required_status": "ready" if run.quality.status is QualityStatus.READY else "degraded",
             "comparison_status": "compared" if previous else "first_review",
         }
         try:
+            if comparison_gaps:
+                raise ValueError("历史比较缺少可核对证据：" + "、".join(comparison_gaps))
             response = await self.provider.chat(
                 messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False, default=str)}],
                 tools=[tool], system_prompt=skill.instructions, max_tokens=4000,
@@ -90,7 +124,25 @@ class PortfolioReviewResultBuilder:
                          if item.name == "submit_portfolio_review"), None)
             if call is None:
                 raise ValueError("模型未提交结构化复盘")
-            result = PortfolioReviewResult.model_validate(call.arguments)
+            submitted = dict(call.arguments)
+            submitted["as_of"] = as_of.model_dump(mode="json")
+            submitted["comparison_status"] = payload["comparison_status"]
+            submitted["previous_review_id"] = previous.get("id") if previous else None
+            submitted["changes_since_previous"] = [change.model_dump(mode="json")
+                                                   for change in verified_changes]
+            for finding in submitted.get("findings") or []:
+                finding["relation_to_previous"] = (
+                    "首次复盘，暂无上次判断可比较" if not previous else
+                    "与上次存在已核实变化，详见比较记录" if any(
+                        change.kind != "continuity" for change in verified_changes
+                    ) else "已核对数据，未出现可确认的新变化"
+                )
+            submitted["evidence_ids"] = list(dict.fromkeys([
+                *(submitted.get("evidence_ids") or []),
+                *(evidence_id for change in verified_changes
+                  for evidence_id in change.current_evidence_ids + change.previous_evidence_ids),
+            ]))
+            result = PortfolioReviewResult.model_validate(submitted)
             if result.status != payload["required_status"]:
                 raise ValueError("报告状态与质量门不一致")
             if result.comparison_status != payload["comparison_status"]:
@@ -114,11 +166,21 @@ class PortfolioReviewResultBuilder:
             prose += " " + " ".join(result.limitations)
             if FORBIDDEN_ACTION.search(prose):
                 raise ValueError("组合复盘包含未经规则裁决的操作或目标仓位")
-            result = result.model_copy(update={"as_of": as_of})
+            baseline_ids = [fact["evidence_id"] for fact in current if (
+                fact["source_ref"] == "derived:portfolio_composition"
+                or fact["source_ref"].startswith("index_daily:")
+                or fact["source_ref"].startswith("advice_records:")
+                or fact["source_ref"].startswith("fund_nav_provider:")
+                or fact["source"] == "agent_runtime"
+            )]
             selected = select_evidence_snapshot(
-                run.results, (fact_id for fact_id in result.evidence_ids if fact_id in current_ids),
+                run.results, (fact_id for fact_id in [*result.evidence_ids, *baseline_ids]
+                              if fact_id in current_ids and fact_id != metadata["evidence_id"]),
             )
-            selected.extend(fact for fact in previous_facts if fact["evidence_id"] in result.evidence_ids)
+            selected.append(metadata)
+            selected.extend(select_saved_evidence_snapshot(
+                previous_facts, (fact_id for fact_id in result.evidence_ids if fact_id in previous_ids),
+            ))
             return result, selected
         except Exception as error:
             reasons = list(run.quality.reasons)
@@ -146,7 +208,11 @@ def render_review_answer(result: PortfolioReviewResult) -> str:
         lines.append("与上次相比：暂无上次判断可比较。")
     else:
         for change in result.changes_since_previous:
-            lines.append(f"与上次相比：{change.description}")
+            lines.extend([
+                f"与上次相比：{change.description}",
+                f"   本次证据（截至 {change.current_as_of}）：{', '.join(change.current_evidence_ids)}",
+                f"   上次证据（截至 {change.previous_as_of}）：{', '.join(change.previous_evidence_ids)}",
+            ])
     for limitation in result.limitations:
         lines.append(f"数据限制：{limitation}")
     return "\n".join(lines)

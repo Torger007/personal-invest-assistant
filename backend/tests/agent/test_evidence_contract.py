@@ -37,9 +37,11 @@ def test_portfolio_keeps_each_position_date_source_and_basis():
 
     assert result["status"] == "success"
     assert result["as_of"] == "2026-10-10"  # conservative aggregate date
-    assert len(result["evidence"]) == 3
+    assert len(result["evidence"]) == 4
     first, second = result["evidence"][:2]
-    aggregate = result["evidence"][2]
+    composition, aggregate = result["evidence"][2:]
+    assert composition["source_ref"] == "derived:portfolio_composition"
+    assert composition["as_of"] == "2026-10-10"
     assert first["source_ref"] == "fund_nav:81,user_fund_positions:p1"
     assert first["as_of"] == "2026-10-16"
     assert first["calculation_basis"] == "shares_times_nav"
@@ -53,7 +55,7 @@ def test_portfolio_keeps_each_position_date_source_and_basis():
     assert [item["evidence_id"] for item in select_evidence_snapshot(run_results, [aggregate["evidence_id"]])] == [
         first["evidence_id"], second["evidence_id"], aggregate["evidence_id"],
     ]
-    assert len(collect_evidence_candidates(run_results)) == 3
+    assert len(collect_evidence_candidates(run_results)) == 4
     with pytest.raises(ValueError, match="unknown evidence IDs"):
         select_evidence_snapshot(run_results, ["ev_missing"])
 

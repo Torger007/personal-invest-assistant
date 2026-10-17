@@ -24,6 +24,7 @@ from app.agent.skills.registry import SkillDefinition
 from app.agent.skills.portfolio_review.result import (
     PortfolioReviewResultBuilder, render_review_answer,
 )
+from app.agent.skills.portfolio_review.comparison import extract_snapshots
 from app.agent.tools import tool_registry
 from app.services.decision_service import decision_service
 
@@ -239,6 +240,7 @@ class AgentCore:
         system_prompt: str | None = None,
         trace_question: str | None = None,
         skill: SkillDefinition | None = None,
+        review_context: dict[str, Any] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Run bounded planning and explain only validated facts and decisions."""
         run_started = time.perf_counter()
@@ -302,7 +304,11 @@ class AgentCore:
             yield {"type": "summarizing"}
             result, selected_evidence = await PortfolioReviewResultBuilder(self.llm).generate(
                 run, skill,
+                previous=(review_context or {}).get("previous"),
+                preference=(review_context or {}).get("preference"),
+                review_id=(review_context or {}).get("review_id"),
             )
+            snapshots = extract_snapshots(run.results)
             answer = render_review_answer(result)
             self.conversation.append({"role": "assistant", "content": answer})
             self.execution_trace.update({
@@ -310,6 +316,7 @@ class AgentCore:
                 "skill_version": skill.version,
                 "review_result": result.model_dump(mode="json"),
                 "selected_evidence": selected_evidence,
+                **snapshots,
                 "final_answer": answer,
                 "metrics": build_run_metrics(
                     results=run.results, plan_count=len(run.plans),

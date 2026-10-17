@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from app.agent.service import agent_service
+from app.agent.review_memory import PreferenceInput, review_memory
 from app.agent.task_manager import agent_task_manager
 from app.auth import get_current_user
 from app.models.user import User
@@ -37,6 +38,34 @@ async def trigger_portfolio_review(user: User = Depends(get_current_user)):
     task = agent_task_manager.start(agent_service.stream_portfolio_review(user.id))
     _task_owners[task.task_id] = user.id
     return {"status": "started", "task_id": task.task_id}
+
+
+@router.get("/preferences")
+async def get_preferences(user: User = Depends(get_current_user)):
+    return await review_memory.get_preference(user.id)
+
+
+@router.put("/preferences")
+async def put_preferences(payload: PreferenceInput, user: User = Depends(get_current_user)):
+    return await review_memory.put_preference(user.id, payload)
+
+
+@router.delete("/preferences")
+async def delete_preferences(user: User = Depends(get_current_user)):
+    return await review_memory.delete_preference(user.id)
+
+
+@router.get("/portfolio-reviews")
+async def list_portfolio_reviews(limit: int = 30, user: User = Depends(get_current_user)):
+    return {"reviews": await review_memory.list_reviews(user.id, limit)}
+
+
+@router.get("/portfolio-reviews/{review_id}")
+async def get_portfolio_review(review_id: str, user: User = Depends(get_current_user)):
+    try:
+        return await review_memory.get_review(user.id, review_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @router.post("/chat")

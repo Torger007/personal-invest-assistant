@@ -202,6 +202,25 @@ def normalize_critical_output(
         evidence.extend(_valuation_fact(call_id, value, read_at) for value in all_valuations)
         dependencies = [fact.evidence_id for fact in evidence]
         total_value = sum(fund.market_value for fund in output.funds)
+        if not truncated and all_valuations:
+            evidence.append(_fact(
+                call_id, "portfolio:composition", "derived_from_holdings",
+                "derived:portfolio_composition",
+                min(value.as_of for value in all_valuations), read_at,
+                "shares;CNY;fraction", "current_user_position_snapshot",
+                {"funds": [
+                    {"code": fund.code, "weight": fund.weight,
+                     "positions": [
+                         {"position_id": value.position_id, "shares": value.shares,
+                          "unit_nav": value.unit_nav, "as_of": value.as_of,
+                          "status": value.status}
+                         for value in fund.valuations
+                     ]}
+                    for fund in output.funds
+                ]},
+                flags=["mixed_valuation_dates"] if len({v.as_of for v in all_valuations}) > 1 else [],
+                depends_on=dependencies,
+            ))
         for fund in output.funds:
             if not fund.valuations or truncated:
                 continue

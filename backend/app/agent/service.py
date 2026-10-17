@@ -16,6 +16,7 @@ from app.agent.metrics import aggregate_run_metrics
 from app.agent.planner import AgentPlanner
 from app.agent.prompt_loader import get_agent_system_prompt, render_agent_prompt
 from app.agent.skills.registry import SkillDefinition, get_skill, match_skill
+from app.agent.review_memory import review_memory
 from app.config import settings
 from app.services.portfolio_service import get_user_portfolio
 from app.models.agent import AgentAnalysis, AgentConversation, AgentMessage
@@ -170,7 +171,19 @@ class AgentService:
     ) -> AsyncIterator[dict[str, Any]]:
         core = AgentCore(user_id=user_id)
         start_time = time.time()
+        review_id: str | None = None
         try:
+            review_context = None
+            pending_review_event = None
+            if skill:
+                review_id, previous, preference = await review_memory.start_review(user_id, skill)
+                review_context = {
+                    "review_id": review_id, "previous": previous, "preference": preference,
+                }
+                yield {
+                    "type": "review_started", "review_id": review_id,
+                    "previous_review_id": previous["id"] if previous else None,
+                }
             if skill or settings.CONSTRAINED_AGENT_ENABLED:
                 event_stream = core.stream_constrained(
                     prompt,
@@ -180,6 +193,7 @@ class AgentService:
                     system_prompt=get_agent_system_prompt(),
                     trace_question=trace_question,
                     skill=skill,
+                    review_context=review_context,
                 )
             else:
                 event_stream = core.stream_planned(
@@ -189,7 +203,18 @@ class AgentService:
                     trace_question=trace_question,
                 )
             async for event in event_stream:
+                if skill and event["type"] == "review_ready":
+                    pending_review_event = event
+                    continue
                 if event["type"] == "complete":
+                    if skill and review_id:
+                        await review_memory.complete_review(
+                            user_id, review_id, core.get_execution_trace(),
+                        )
+                        event["review_id"] = review_id
+                        if pending_review_event:
+                            pending_review_event["review_id"] = review_id
+                            yield pending_review_event
                     event["analysis_id"] = await self._save_analysis(
                         core=core,
                         analysis_type=analysis_type,
@@ -201,7 +226,12 @@ class AgentService:
                 yield event
         except Exception as e:
             logger.exception("[Agent] 流式执行失败")
+            if review_id:
+                await review_memory.stop_review(user_id, review_id, error=str(e))
             yield {"type": "error", "message": str(e)}
+        finally:
+            if review_id:
+                await review_memory.stop_review(user_id, review_id)
 
     async def _prepare_conversation(
         self, question: str, user_id: str, conversation_id: str | None,

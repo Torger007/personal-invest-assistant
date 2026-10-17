@@ -28,7 +28,19 @@ def select_evidence_snapshot(
     results: Iterable[dict[str, Any]], evidence_ids: Iterable[str],
 ) -> list[dict[str, Any]]:
     """Persist only facts cited by a structured report, rejecting stale IDs."""
-    available = {item["evidence_id"]: item for item in collect_evidence_candidates(results)}
+    return select_saved_evidence_snapshot(collect_evidence_candidates(results), evidence_ids)
+
+
+def select_saved_evidence_snapshot(
+    facts: Iterable[dict[str, Any]], evidence_ids: Iterable[str],
+) -> list[dict[str, Any]]:
+    """Select cited saved facts and their complete dependency closure."""
+    available: dict[str, dict[str, Any]] = {}
+    for raw in facts:
+        item = EvidenceSnapshot.model_validate(raw).model_dump(mode="json")
+        if item["evidence_id"] in available:
+            raise ValueError(f"duplicate evidence_id: {item['evidence_id']}")
+        available[item["evidence_id"]] = item
     requested = list(dict.fromkeys(evidence_ids))
     selected: list[dict[str, Any]] = []
     visiting: set[str] = set()

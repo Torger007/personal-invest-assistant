@@ -8,6 +8,7 @@ from app.api import auth as auth_api
 from app.auth import get_current_user, provision_bootstrap_admin, require_admin
 from app.config import settings
 from app.services.data_collector.scheduler import start_scheduler, stop_scheduler
+from app.agent.review_memory import review_memory
 from app.utils.db import close_db, run_migrations
 
 app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION)
@@ -31,6 +32,7 @@ app.include_router(tasks.router, prefix=settings.API_PREFIX, dependencies=[Depen
 async def startup_event():
     if settings.RUN_MIGRATIONS_ON_STARTUP:
         await run_migrations()
+    await review_memory.mark_orphaned_runs()
     await provision_bootstrap_admin()
     if settings.SCHEDULER_ENABLED:
         start_scheduler()

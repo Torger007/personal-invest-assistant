@@ -20,4 +20,4 @@
 
 模型通过 `submit_portfolio_review` 提交 `PortfolioReviewResult`。服务端负责填入本次运行与各数据的时间，核对本次及历史证据 ID、比较状态和操作边界；无效输出转为不含臆测关注项的降级报告。`review_ready` 与 `complete` 事件携带结构化报告，执行轨迹记录 Skill 版本与引用的最小证据快照。
 
-第三步的手动运行仍使用现有临时任务流，报告同时保存在普通 `AgentAnalysis` 执行轨迹中。第四步将增加独立的 `PortfolioReview` 持久化记录和上次成功复盘读取；普通聊天摘要与 `AgentAnalysis` 不作为“上次判断”的权威来源。用户偏好也在第四步接入。
+手动运行的进度仍使用现有任务流；报告在展示前写入独立 `PortfolioReview` 记录。普通聊天摘要与 `AgentAnalysis` 不作为“上次判断”的权威来源。偏好和历史记录的读写语义见 `portfolio-review-memory.md`。

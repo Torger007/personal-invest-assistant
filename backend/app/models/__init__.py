@@ -1,11 +1,15 @@
 from app.models.advice import AdviceRecord
-from app.models.agent import AgentAnalysis, AgentConversation, AgentMessage, AgentSettings
+from app.models.agent import (
+    AgentAnalysis, AgentConversation, AgentMessage, AgentSettings,
+    PortfolioReview, UserPreference,
+)
 from app.models.fund import Fund, FundCatalogSyncRun, FundNav
 from app.models.market import FundFlow, IndexDaily, SectorBoard, SectorDaily
 from app.models.user import User, UserFundPosition, UserSession
 
 __all__ = [
     "AdviceRecord", "AgentAnalysis", "AgentConversation", "AgentMessage", "AgentSettings",
+    "PortfolioReview", "UserPreference",
     "Fund", "FundCatalogSyncRun", "FundNav", "FundFlow", "IndexDaily", "SectorBoard", "SectorDaily",
     "User", "UserFundPosition", "UserSession",
 ]
