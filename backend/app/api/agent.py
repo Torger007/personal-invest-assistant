@@ -31,6 +31,14 @@ async def trigger_analysis(user: User = Depends(get_current_user)):
     return {"status": "started", "task_id": task.task_id}
 
 
+@router.post("/portfolio-review")
+async def trigger_portfolio_review(user: User = Depends(get_current_user)):
+    """Run the review Skill through the same bounded Agent task stream."""
+    task = agent_task_manager.start(agent_service.stream_portfolio_review(user.id))
+    _task_owners[task.task_id] = user.id
+    return {"status": "started", "task_id": task.task_id}
+
+
 @router.post("/chat")
 async def chat(request: ChatRequest, user: User = Depends(get_current_user)):
     """Stream tool progress and answer tokens for an interactive question."""

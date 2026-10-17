@@ -17,6 +17,7 @@ pydantic-settings
 # 数据处理
 pandas
 numpy
+exchange-calendars>=4.13.2,<5
 
 # 金融数据（akshare）
 akshare

@@ -1,16 +1,19 @@
 """Deterministic data-quality checks used before investment decisions."""
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo
 
 from app.agent.contracts import QualityReport, QualityStatus, ToolResultStatus
+from app.agent.trading_calendar import expected_session, sessions_between
 
 
 REQUIRED_TOOLS_BY_INTENT: dict[str, set[str]] = {
     "single_fund": {"get_fund_nav", "analyze_technical", "get_latest_advice"},
     "portfolio": {"get_portfolio", "get_market_overview", "get_latest_advice", "compare_funds"},
     "portfolio_analysis": {"get_portfolio", "get_market_overview", "get_latest_advice", "compare_funds"},
+    "portfolio_review": {"get_portfolio", "get_market_overview", "get_latest_advice", "compare_funds"},
     "fund_comparison": {"compare_funds", "get_latest_advice"},
 }
 
@@ -33,10 +36,17 @@ class QualityGate:
         *,
         today: date | None = None,
         allow_replan: bool = True,
+        required_tools: set[str] | frozenset[str] | None = None,
     ) -> QualityReport:
+        results = list(results)
+        if intent == "portfolio_review":
+            return self._assess_review(
+                results, today=today, allow_replan=allow_replan,
+                required_tools=required_tools or REQUIRED_TOOLS_BY_INTENT["portfolio_review"],
+            )
         today = today or date.today()
         latest_by_tool = {item["tool_name"]: item["result"] for item in results}
-        required_tools = REQUIRED_TOOLS_BY_INTENT.get(intent, set())
+        required_tools = required_tools or REQUIRED_TOOLS_BY_INTENT.get(intent, set())
         missing: list[str] = []
         stale: list[str] = []
         failed: list[str] = []
@@ -82,6 +92,100 @@ class QualityGate:
             failed=failed,
             conflicts=conflicts,
             reasons=reasons,
+        )
+
+    def _assess_review(
+        self, results: list[dict[str, Any]], *, today: date | None, allow_replan: bool,
+        required_tools: set[str] | frozenset[str],
+    ) -> QualityReport:
+        # Test dates use a post-publication clock; production uses Shanghai time.
+        at = (datetime.combine(today, time(23), tzinfo=ZoneInfo("Asia/Shanghai"))
+              if today else datetime.now(ZoneInfo("Asia/Shanghai")))
+        nav_expected = expected_session(at, publication_hour=22)
+        market_expected = expected_session(at, publication_hour=16)
+        if nav_expected is None or market_expected is None:
+            return QualityReport(
+                status=QualityStatus.DEGRADED,
+                reasons=["交易日历不可用，无法判断净值和市场数据是否及时"],
+            )
+
+        by_tool: dict[str, list[dict[str, Any]]] = {}
+        for item in results:
+            by_tool.setdefault(item["tool_name"], []).append(item["result"])
+        portfolio_results = [result for result in by_tool.get("get_portfolio", [])
+                             if result.get("status") == "success"]
+        portfolio_codes = {
+            fund.get("code")
+            for fund in ((portfolio_results[-1].get("data") or {}).get("funds") or [])
+            if fund.get("code")
+        } if portfolio_results else set()
+        missing: list[str] = []
+        stale: list[str] = []
+        failed: list[str] = []
+        for tool in sorted(required_tools):
+            candidates = by_tool.get(tool, [])
+            if not candidates:
+                missing.append(tool)
+                continue
+            # A failed retry must not erase an earlier usable observation.
+            usable = [result for result in candidates if result.get("status") == "success"]
+            if not usable:
+                if any(result.get("status") == "error" for result in candidates):
+                    failed.append(tool)
+                else:
+                    missing.append(tool)
+                continue
+            result = usable[-1]
+            if tool == "get_portfolio":
+                funds = (result.get("data") or {}).get("funds") or []
+                valuations = [row for fund in funds for row in fund.get("valuations", [])]
+                if not funds or not valuations:
+                    missing.append(tool)
+                elif any(row.get("status") != "nav" or _parse_date(row.get("as_of")) is None
+                         or _parse_date(row["as_of"]) != nav_expected for row in valuations):
+                    stale.append(tool)
+            elif tool == "get_market_overview":
+                indices = (result.get("data") or {}).get("indices") or []
+                if len(indices) < 3 or any(index.get("value") is None for index in indices):
+                    missing.append(tool)
+                elif any(_parse_date(index.get("date")) is None
+                         or _parse_date(index["date"]) != market_expected for index in indices):
+                    stale.append(tool)
+            elif tool in {"get_latest_advice", "compare_funds"}:
+                data = result.get("data") or {}
+                if data.get("missing_fund_codes"):
+                    missing.append(tool)
+                elif tool == "get_latest_advice" and not data.get("funds"):
+                    missing.append(tool)
+                elif tool == "compare_funds" and not data.get("funds"):
+                    missing.append(tool)
+                elif portfolio_codes and not portfolio_codes <= {
+                    fund.get("fund_code") for fund in data["funds"]
+                }:
+                    missing.append(tool)
+                else:
+                    if tool == "get_latest_advice":
+                        dates = [((fund.get("latest_advice") or {}).get("date"))
+                                 for fund in data["funds"]]
+                    else:
+                        dates = [fund.get("advice_date") for fund in data["funds"]]
+                    ages = [sessions_between(_parse_date(value), nav_expected)
+                            if _parse_date(value) and _parse_date(value) <= nav_expected else None
+                            for value in dates]
+                    if any(age is None or age > 1 for age in ages):
+                        stale.append(tool)
+
+        reasons = [
+            *[f"缺少必需数据：{name}" for name in missing],
+            *[f"数据已过期或使用校准估值：{name}" for name in stale],
+            *[f"工具执行失败：{name}" for name in failed],
+        ]
+        if not reasons:
+            return QualityReport(status=QualityStatus.READY)
+        return QualityReport(
+            status=QualityStatus.REPLAN if allow_replan else QualityStatus.DEGRADED,
+            missing=missing, stale=stale, failed=failed,
+            recoverable=allow_replan, reasons=reasons,
         )
 
     @staticmethod

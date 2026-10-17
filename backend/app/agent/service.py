@@ -15,6 +15,7 @@ from app.agent.core import AgentCore
 from app.agent.metrics import aggregate_run_metrics
 from app.agent.planner import AgentPlanner
 from app.agent.prompt_loader import get_agent_system_prompt, render_agent_prompt
+from app.agent.skills.registry import SkillDefinition, get_skill, match_skill
 from app.config import settings
 from app.services.portfolio_service import get_user_portfolio
 from app.models.agent import AgentAnalysis, AgentConversation, AgentMessage
@@ -85,7 +86,8 @@ class AgentService:
                 conversation.summary, prior_messages,
             ),
         )
-        plan = self.planner.plan_question(question, active_context)
+        skill = get_skill(skill_id) if (skill_id := match_skill(question)) else None
+        plan = self.planner.plan_portfolio_review() if skill else self.planner.plan_question(question, active_context)
         async for event in self._stream_and_save(
             analysis_type="interactive",
             prompt=prompt,
@@ -97,6 +99,7 @@ class AgentService:
                 "active_context": active_context,
                 "portfolio_fund_codes": portfolio_codes,
             },
+            skill=skill,
         ):
             if event["type"] == "complete":
                 event["conversation_id"] = conversation.id
@@ -137,6 +140,23 @@ class AgentService:
         ):
             yield event
 
+    async def stream_portfolio_review(self, user_id: str) -> AsyncIterator[dict[str, Any]]:
+        """Explicit manual entry for the registered review workflow."""
+        skill = get_skill("portfolio_review")
+        async with AsyncSessionLocal() as session:
+            portfolio = await get_user_portfolio(session, user_id)
+        async for event in self._stream_and_save(
+            analysis_type="portfolio_review",
+            prompt="请复盘当前持仓，指出最值得关注的有证据支持的变化。",
+            plan=self.planner.plan_portfolio_review(),
+            trace_question="持仓复盘",
+            user_id=user_id,
+            planning_question="复盘当前持仓",
+            planning_context={"portfolio_fund_codes": [fund["code"] for fund in portfolio]},
+            skill=skill,
+        ):
+            yield event
+
     async def _stream_and_save(
         self,
         analysis_type: str,
@@ -146,11 +166,12 @@ class AgentService:
         user_id: str,
         planning_question: str | None = None,
         planning_context: dict[str, Any] | None = None,
+        skill: SkillDefinition | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         core = AgentCore(user_id=user_id)
         start_time = time.time()
         try:
-            if settings.CONSTRAINED_AGENT_ENABLED:
+            if skill or settings.CONSTRAINED_AGENT_ENABLED:
                 event_stream = core.stream_constrained(
                     prompt,
                     planning_question=planning_question or trace_question,
@@ -158,6 +179,7 @@ class AgentService:
                     planning_context=planning_context or {},
                     system_prompt=get_agent_system_prompt(),
                     trace_question=trace_question,
+                    skill=skill,
                 )
             else:
                 event_stream = core.stream_planned(

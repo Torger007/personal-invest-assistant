@@ -88,6 +88,18 @@ class AgentPlanner:
             ],
         )
 
+    def plan_portfolio_review(self) -> ToolPlan:
+        """Safe fallback for the registered portfolio review skill."""
+        return ToolPlan(
+            "portfolio_review",
+            [
+                PlanStep("get_portfolio"),
+                PlanStep("get_market_overview"),
+                PlanStep("get_latest_advice"),
+                PlanStep("compare_funds"),
+            ],
+        )
+
     def _single_fund_plan(self, fund_code: str, question: str) -> ToolPlan:
         steps = [
             PlanStep("get_fund_info", {"fund_code": fund_code}),

@@ -20,6 +20,10 @@ from app.agent.orchestrator import ConstrainedAgentOrchestrator
 from app.agent.plan_provider import ConstrainedPlanProvider
 from app.agent.planner import ToolPlan
 from app.agent.policy import get_tool_policy
+from app.agent.skills.registry import SkillDefinition
+from app.agent.skills.portfolio_review.result import (
+    PortfolioReviewResultBuilder, render_review_answer,
+)
 from app.agent.tools import tool_registry
 from app.services.decision_service import decision_service
 
@@ -234,6 +238,7 @@ class AgentCore:
         planning_context: dict[str, Any],
         system_prompt: str | None = None,
         trace_question: str | None = None,
+        skill: SkillDefinition | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Run bounded planning and explain only validated facts and decisions."""
         run_started = time.perf_counter()
@@ -246,6 +251,7 @@ class AgentCore:
         allowed_tools = [
             name for name in self.tools.get_tool_names()
             if (policy := get_tool_policy(name)) and policy.llm_plannable
+            and (skill is None or name in skill.allowed_tools)
         ]
         runner = ConstrainedAgentOrchestrator(
             ConstrainedPlanProvider(provider=self.llm),
@@ -257,6 +263,7 @@ class AgentCore:
             {**planning_context, "allowed_tools": allowed_tools},
             fallback_plan,
             emit,
+            skill=skill,
         ))
 
         while not run_task.done() or not queued_events.empty():
@@ -290,6 +297,33 @@ class AgentCore:
             "decision": decision.model_dump(mode="json") if decision else None,
             "fallback_used": run.fallback_used,
         }
+
+        if skill:
+            yield {"type": "summarizing"}
+            result, selected_evidence = await PortfolioReviewResultBuilder(self.llm).generate(
+                run, skill,
+            )
+            answer = render_review_answer(result)
+            self.conversation.append({"role": "assistant", "content": answer})
+            self.execution_trace.update({
+                "skill_id": skill.id,
+                "skill_version": skill.version,
+                "review_result": result.model_dump(mode="json"),
+                "selected_evidence": selected_evidence,
+                "final_answer": answer,
+                "metrics": build_run_metrics(
+                    results=run.results, plan_count=len(run.plans),
+                    fallback_used=run.fallback_used,
+                    quality=run.quality.model_dump(mode="json"),
+                    decision=None,
+                    total_duration_ms=round((time.perf_counter() - run_started) * 1000),
+                    llm_stream={},
+                ),
+                **self.get_provider_info(),
+            })
+            yield {"type": "review_ready", "review": result.model_dump(mode="json")}
+            yield {"type": "complete", "answer": answer, "review": result.model_dump(mode="json")}
+            return
 
         yield {"type": "summarizing"}
         answer_parts: list[str] = []

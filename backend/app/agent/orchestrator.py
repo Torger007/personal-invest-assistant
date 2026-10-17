@@ -8,8 +8,11 @@ from typing import Any, Awaitable, Callable
 from app.agent.contracts import AgentPlan, QualityReport, QualityStatus
 from app.agent.execution_engine import ExecutionEngine
 from app.agent.plan_provider import ConstrainedPlanProvider, PlanningError
+from app.agent.plan_validator import PlanValidationError, PlanValidator
 from app.agent.planner import ToolPlan
+from app.agent.policy import get_tool_policy
 from app.agent.quality_gate import QualityGate
+from app.agent.skills.registry import SkillDefinition
 
 
 EventCallback = Callable[[dict[str, Any]], Awaitable[None]]
@@ -107,18 +110,50 @@ class ConstrainedAgentOrchestrator:
         emit: EventCallback | None = None,
         *,
         assessment_date: date | None = None,
+        skill: SkillDefinition | None = None,
     ) -> ConstrainedRun:
         all_results: list[dict[str, Any]] = []
         plans: list[AgentPlan] = []
         fallback_used = False
         planning_context = dict(context)
+        used_calls: dict[str, int] = {}
+        supplemental_calls = 0
+        validator = PlanValidator()
 
         for attempt in range(MAX_REPLANS + 1):
+            if skill:
+                available_tools = set(context.get("allowed_tools") or skill.allowed_tools) & skill.allowed_tools
+                planning_context.update({
+                    "skill_id": skill.id,
+                    "skill_instructions": skill.instructions,
+                    "allowed_tools": sorted(available_tools),
+                    "remaining_tool_calls": skill.max_tool_calls - len(all_results),
+                    "remaining_supplement_calls": skill.max_supplement_calls - supplemental_calls,
+                })
             try:
                 plan = await self.planner.plan(question, planning_context)
-            except PlanningError as error:
+                if skill:
+                    validator.validate(
+                        plan, allowed_tools=available_tools, expected_intent=skill.id,
+                    )
+                    if attempt and any(step.tool not in skill.supplement_tools for step in plan.steps):
+                        raise PlanValidationError("补查计划包含非补查工具")
+                    if len(all_results) + len(plan.steps) > skill.max_tool_calls:
+                        raise PlanValidationError("整次运行工具预算已耗尽")
+                    if attempt and supplemental_calls + len(plan.steps) > skill.max_supplement_calls:
+                        raise PlanValidationError("质量门补查预算已耗尽")
+                    for tool_name in {step.tool for step in plan.steps}:
+                        policy = get_tool_policy(tool_name)
+                        proposed = sum(step.tool == tool_name for step in plan.steps)
+                        if policy and used_calls.get(tool_name, 0) + proposed > policy.max_calls:
+                            raise PlanValidationError(f"整次运行的工具调用次数超限: {tool_name}")
+            except (PlanningError, PlanValidationError) as error:
                 if attempt == 0:
                     plan = DeterministicPlanAdapter.from_tool_plan(fallback_plan)
+                    if skill:
+                        validator.validate(
+                            plan, allowed_tools=available_tools, expected_intent=skill.id,
+                        )
                     fallback_used = True
                     await self._emit(emit, {
                         "type": "plan_fallback", "reason": str(error),
@@ -128,6 +163,7 @@ class ConstrainedAgentOrchestrator:
                     quality = self.quality_gate.assess(
                         fallback_plan.intent, all_results,
                         today=assessment_date, allow_replan=False,
+                        required_tools=skill.required_tools if skill else None,
                     )
                     quality.reasons.append(f"重规划失败：{error}")
                     return ConstrainedRun(plans, all_results, quality, fallback_used)
@@ -140,9 +176,21 @@ class ConstrainedAgentOrchestrator:
             })
             execution = await self.engine.execute(plan, user_id, emit)
             all_results.extend(execution.results)
+            if skill:
+                for step in plan.steps:
+                    used_calls[step.tool] = used_calls.get(step.tool, 0) + 1
+                if attempt:
+                    supplemental_calls += len(plan.steps)
             quality = self.quality_gate.assess(
-                plan.intent, all_results,
-                today=assessment_date, allow_replan=attempt < MAX_REPLANS,
+                skill.id if skill else plan.intent, all_results,
+                today=assessment_date,
+                required_tools=skill.required_tools if skill else None,
+                allow_replan=(attempt < MAX_REPLANS and (
+                    not skill or (
+                        len(all_results) < skill.max_tool_calls
+                        and supplemental_calls < skill.max_supplement_calls
+                    )
+                )),
             )
             await self._emit(emit, {
                 "type": "quality_checked", "status": quality.status.value,
@@ -176,6 +224,7 @@ class ConstrainedAgentOrchestrator:
             self.quality_gate.assess(
                 fallback_plan.intent, all_results,
                 today=assessment_date, allow_replan=False,
+                required_tools=skill.required_tools if skill else None,
             ),
             fallback_used,
         )

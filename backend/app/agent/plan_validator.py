@@ -14,22 +14,28 @@ class PlanValidationError(ValueError):
 class PlanValidator:
     """Validate a plan before it can reach the execution engine."""
 
-    def validate(self, plan: AgentPlan) -> AgentPlan:
+    def validate(
+        self, plan: AgentPlan, *, allowed_tools: set[str] | None = None,
+        expected_intent: str | None = None,
+    ) -> AgentPlan:
+        if expected_intent is not None and plan.intent != expected_intent:
+            raise PlanValidationError(f"计划意图不匹配: {plan.intent}")
         seen_ids: set[str] = set()
-        seen_tools: set[str] = set()
+        tool_counts: dict[str, int] = {}
 
         for step in plan.steps:
             if step.id in seen_ids:
                 raise PlanValidationError(f"步骤 ID 重复: {step.id}")
-            if step.tool in seen_tools:
-                # The initial executor keys dependent outputs by tool name.
-                # Refusing duplicates prevents ambiguous references.
-                raise PlanValidationError(f"当前版本不允许重复调用工具: {step.tool}")
             policy = get_tool_policy(step.tool)
             if not policy:
                 raise PlanValidationError(f"工具不在白名单中: {step.tool}")
+            if allowed_tools is not None and step.tool not in allowed_tools:
+                raise PlanValidationError(f"工具不属于当前 Skill: {step.tool}")
             if not policy.llm_plannable:
                 raise PlanValidationError(f"LLM 不允许规划受控写入工具: {step.tool}")
+            tool_counts[step.tool] = tool_counts.get(step.tool, 0) + 1
+            if tool_counts[step.tool] > policy.max_calls:
+                raise PlanValidationError(f"工具调用次数超限: {step.tool}")
             if not set(step.depends_on).issubset(seen_ids):
                 raise PlanValidationError(f"步骤 {step.id} 依赖未执行或不存在的步骤")
 
@@ -46,7 +52,6 @@ class PlanValidator:
                     )
 
             seen_ids.add(step.id)
-            seen_tools.add(step.tool)
         return plan
 
     @staticmethod

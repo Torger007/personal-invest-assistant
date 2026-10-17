@@ -29,6 +29,7 @@ class ConstrainedPlanProvider:
 
     async def plan(self, question: str, context: dict[str, Any]) -> AgentPlan:
         allowed_tools = context.get("allowed_tools") or []
+        skill_instructions = context.get("skill_instructions")
         planner_tool = {
             "name": "submit_plan",
             "description": "提交一个受约束的数据获取计划；这不是可执行的业务工具。",
@@ -44,16 +45,23 @@ class ConstrainedPlanProvider:
             "portfolio_fund_codes": context.get("portfolio_fund_codes") or [],
             "quality_report": context.get("quality_report"),
             "completed_steps": context.get("completed_steps") or [],
+            "remaining_tool_calls": context.get("remaining_tool_calls"),
+            "remaining_supplement_calls": context.get("remaining_supplement_calls"),
         }
         response = await self.provider.chat(
             messages=[{"role": "user", "content": json.dumps(planner_input, ensure_ascii=False)}],
             tools=[planner_tool],
-            system_prompt=PLANNER_SYSTEM_PROMPT,
+            system_prompt=(PLANNER_SYSTEM_PROMPT + "\n\n" + skill_instructions)
+            if skill_instructions else PLANNER_SYSTEM_PROMPT,
         )
         call = next((item for item in response.tool_calls or [] if item.name == "submit_plan"), None)
         if not call:
             raise PlanningError("规划模型未提交结构化计划")
         try:
-            return self.validator.validate(AgentPlan.model_validate(call.arguments))
+            return self.validator.validate(
+                AgentPlan.model_validate(call.arguments),
+                allowed_tools=set(allowed_tools) if context.get("skill_id") else None,
+                expected_intent=context.get("skill_id"),
+            )
         except (ValueError, PlanValidationError) as error:
             raise PlanningError(f"规划模型返回的计划无效: {error}") from error
