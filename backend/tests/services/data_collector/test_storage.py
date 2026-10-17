@@ -53,6 +53,19 @@ class TestDataStorage:
         assert record.source == "akshare_eastmoney"
         assert record.fetched_at == fetched_at
 
+        history = await storage.get_fund_nav_history("008163", days=1)
+        assert history[0]["id"] == record.id
+        assert history[0]["source"] == "akshare_eastmoney"
+        assert history[0]["fetched_at"] == fetched_at.isoformat()
+
+    async def test_zero_nav_change_is_preserved_as_zero(self, storage):
+        await storage.save_fund_nav([{
+            "fund_code": "008163", "date": date(2026, 9, 16),
+            "unit_nav": Decimal("1.0000"), "daily_return": Decimal("0"),
+        }])
+        history = await storage.get_fund_nav_history("008163", days=1)
+        assert history[0]["daily_return"] == 0.0
+
     async def test_save_fund_info(self, storage):
         """测试保存和更新基金信息"""
         # 准备测试数据

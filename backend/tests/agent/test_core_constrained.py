@@ -61,6 +61,13 @@ class _ConstrainedTools:
         if name == "get_latest_advice":
             return {
                 **common,
+                "evidence": [{
+                    "evidence_id": "ev_test:advice:1", "source": "rule_engine",
+                    "source_ref": "advice_records:1", "as_of": "2026-09-12",
+                    "read_at": "2026-09-13T00:00:00Z", "unit": "signal",
+                    "calculation_basis": "stored_rule_advice", "status": "success",
+                    "values": {"overall_signal": "持有观望"},
+                }],
                 "data": {"advice": [{
                     "overall_signal": "持有观望", "confidence": 66.0,
                     "extra": {"target_position": 0.3, "consistency": "中高"},
@@ -91,3 +98,4 @@ async def test_constrained_core_emits_rule_decision_and_hides_tools_from_summary
     assert core.get_execution_trace()["decision"]["target_position"] == 0.3
     assert core.get_execution_trace()["metrics"]["tool_count"] == 3
     assert core.get_execution_trace()["metrics"]["first_token_ms"] is not None
+    assert core.get_execution_trace()["evidence_candidates"][0]["source_ref"] == "advice_records:1"

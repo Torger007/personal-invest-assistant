@@ -137,6 +137,7 @@ async def _execute_get_latest_advice(tool_input: dict, user_id: str | None) -> d
                     "advice": [_advice_record_to_dict(record) for record in records],
                 },
                 "count": len(records),
+                "as_of": min((str(record.date) for record in records if record.date), default=None),
                 "message": None if records else "暂无建议记录，请先调用 generate_advice 生成",
             }
 
@@ -150,10 +151,12 @@ async def _execute_get_latest_advice(tool_input: dict, user_id: str | None) -> d
                 "fund_code": code,
                 "fund_name": portfolio_map[code].get("name", ""),
                 "weight": portfolio_map[code].get("weight", 0),
+                "valuations": portfolio_map[code].get("valuations", []),
                 "latest_advice": _advice_record_to_dict(record) if record else None,
             })
 
         missing = [item["fund_code"] for item in advice if item["latest_advice"] is None]
+        advice_dates = [item["latest_advice"]["date"] for item in advice if item["latest_advice"] and item["latest_advice"]["date"]]
         return {
             "status": "success",
             "data": {
@@ -161,6 +164,7 @@ async def _execute_get_latest_advice(tool_input: dict, user_id: str | None) -> d
                 "missing_fund_codes": missing,
             },
             "count": len(advice),
+            "as_of": min(advice_dates) if advice_dates else None,
             "message": f"{len(missing)} 只基金暂无建议记录，可调用 generate_advice 生成" if missing else None,
         }
 
@@ -207,6 +211,10 @@ async def _execute_get_market_overview(tool_input: dict) -> dict:
                     change_pct = change / float(prev["close"]) * 100
 
                 indices.append({
+                    "record_id": latest.get("id"),
+                    "previous_record_id": prev.get("id") if prev else None,
+                    "previous_close": float(prev["close"]) if prev and prev.get("close") is not None else None,
+                    "previous_date": str(prev["date"]) if prev and prev.get("date") else None,
                     "name": item["name"],
                     "code": item["code"],
                     "value": float(latest["close"]) if latest.get("close") is not None else None,
@@ -217,6 +225,10 @@ async def _execute_get_market_overview(tool_input: dict) -> dict:
                 })
             else:
                 indices.append({
+                    "record_id": None,
+                    "previous_record_id": None,
+                    "previous_close": None,
+                    "previous_date": None,
                     "name": item["name"],
                     "code": item["code"],
                     "value": None,
@@ -234,10 +246,11 @@ async def _execute_get_market_overview(tool_input: dict) -> dict:
         "data": {
             "indices": indices,
             "fund_flow": {
+                "record_id": latest_flow.get("id") if latest_flow else None,
                 "date": str(latest_flow["date"]) if latest_flow else None,
-                "north_flow": float(latest_flow["north_flow"]) if latest_flow else None,
-                "main_flow": float(latest_flow["main_flow"]) if latest_flow else None,
-                "retail_flow": float(latest_flow["retail_flow"]) if latest_flow else None,
+                "north_flow": float(latest_flow["north_flow"]) if latest_flow and latest_flow["north_flow"] is not None else None,
+                "main_flow": float(latest_flow["main_flow"]) if latest_flow and latest_flow["main_flow"] is not None else None,
+                "retail_flow": float(latest_flow["retail_flow"]) if latest_flow and latest_flow["retail_flow"] is not None else None,
             } if latest_flow else None,
             "update_time": indices[0]["date"] if indices and indices[0].get("date") else None,
         },
@@ -312,6 +325,7 @@ async def _execute_compare_funds(tool_input: dict, user_id: str | None) -> dict:
 
             comparisons.append({
                 "fund_code": code,
+                "advice_record_id": latest_advice.get("record_id") if latest_advice else None,
                 "fund_name": portfolio_map.get(code, {}).get("name") or (fund.name if fund else ""),
                 "fund_type": fund.type if fund else None,
                 "weight": portfolio_map.get(code, {}).get("weight"),
@@ -341,8 +355,12 @@ async def _execute_compare_funds(tool_input: dict, user_id: str | None) -> dict:
             "funds": comparisons,
             "ranked_by_overall_score": ranked,
             "missing_fund_codes": missing,
+            "portfolio_valuations": [
+                value for fund in portfolio for value in fund.get("valuations", [])
+            ],
         },
         "count": len(comparisons),
+        "as_of": min((item["advice_date"] for item in comparisons if item["advice_date"]), default=None),
         "message": f"{len(missing)} 只基金暂无建议记录，可调用 generate_advice 生成" if missing else None,
     }
 
@@ -406,8 +424,10 @@ async def _fetch_advice_records(session, fund_code: str, limit: int, user_id: st
 def _advice_record_to_dict(record: AdviceRecord) -> dict:
     extra = _parse_advice_extra(record.advice_text)
     return {
+        "record_id": record.id,
         "fund_code": record.fund_code,
         "date": str(record.date) if record.date else None,
+        "record_created_at": record.created_at.isoformat() if record.created_at else None,
         "overall_signal": record.overall_signal,
         "confidence": float(record.confidence) if record.confidence is not None else None,
         "scores": {
@@ -442,7 +462,10 @@ async def _execute_get_fund_nav(tool_input: dict) -> dict:
     return {
         "status": "success",
         "data": data,
-        "count": len(data)
+        "count": len(data),
+        "source": "akshare_eastmoney",
+        "unit": "NAV;percent",
+        "calculation_basis": "provider_reported_nav",
     }
 
 

@@ -21,6 +21,25 @@ class ToolResultStatus(str, Enum):
     ERROR = "error"
 
 
+class EvidenceSnapshot(BaseModel):
+    """Small immutable fact copied from a tool result for later review."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_id: str
+    source: str
+    source_ref: str
+    as_of: str | None
+    source_fetched_at: str | None = None
+    read_at: str
+    unit: str
+    calculation_basis: str
+    status: ToolResultStatus
+    quality_flags: list[str] = Field(default_factory=list)
+    depends_on_evidence_ids: list[str] = Field(default_factory=list)
+    values: dict[str, Any]
+
+
 class AgentPlanStep(BaseModel):
     """One LLM-proposed tool step, validated before execution."""
 
@@ -59,6 +78,12 @@ class ToolResultEnvelope(BaseModel):
     error_code: str | None = None
     as_of: str | None = None
     fetched_at: str
+    source: str = "unknown"
+    retrieval_tool: str | None = None
+    unit: str | None = None
+    calculation_basis: str | None = None
+    evidence_id: str | None = None
+    evidence: list[EvidenceSnapshot] = Field(default_factory=list)
     freshness_policy: str | None = None
     completeness: float = Field(default=1.0, ge=0.0, le=1.0)
     quality_flags: list[str] = Field(default_factory=list)

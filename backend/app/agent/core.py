@@ -13,6 +13,7 @@ from typing import Any, AsyncIterator, List, Dict
 
 from app.agent.providers import create_provider, LLMResponse
 from app.agent.contracts import QualityStatus
+from app.agent.evidence import collect_evidence_candidates
 from app.agent.execution_engine import ExecutionEngine
 from app.agent.metrics import build_run_metrics
 from app.agent.orchestrator import ConstrainedAgentOrchestrator
@@ -285,6 +286,7 @@ class AgentCore:
                 for item in run.results
             ],
             "quality": run.quality.model_dump(mode="json"),
+            "evidence_candidates": collect_evidence_candidates(run.results),
             "decision": decision.model_dump(mode="json") if decision else None,
             "fallback_used": run.fallback_used,
         }

@@ -52,6 +52,7 @@ async def get_position_snapshots(session: AsyncSession, user_id: str) -> list[di
             "daily_return": float(nav.daily_return) if use_nav and nav.daily_return is not None else None,
             "nav_source": (nav.source or "unknown") if use_nav else None,
             "nav_fetched_at": nav.fetched_at.isoformat() if use_nav and nav.fetched_at else None,
+            "source_record_id": nav.id if use_nav else position.id,
         })
     return snapshots
 
@@ -76,12 +77,16 @@ async def get_user_portfolio(session: AsyncSession, user_id: str) -> list[dict]:
         item["platform_count"] += 1
         item["valuations"].append({
             "position_id": position.id,
+            "shares": float(position.shares),
+            "unit_nav": float(snapshot["unit_nav"]) if snapshot["unit_nav"] is not None else None,
             "market_value": float(snapshot["market_value"]),
             "as_of": snapshot["valuation_as_of"],
             "basis": snapshot["valuation_basis"],
             "status": snapshot["valuation_status"],
             "nav_source": snapshot["nav_source"],
             "nav_fetched_at": snapshot["nav_fetched_at"],
+            "source": snapshot["nav_source"] if snapshot["valuation_status"] == "nav" else "user_calibration",
+            "source_record_id": snapshot["source_record_id"],
         })
 
     total_market_value = sum((item["market_value"] for item in aggregated.values()), Decimal("0"))

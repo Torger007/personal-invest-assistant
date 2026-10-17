@@ -158,6 +158,7 @@ class DataStorage:
         data_list = []
         for record in records:
             data_list.append({
+                "id": record.id,
                 "code": record.code,
                 "date": record.date,
                 "open": record.open,
@@ -190,6 +191,7 @@ class DataStorage:
         data_list = []
         for record in records:
             data_list.append({
+                "id": record.id,
                 "date": record.date,
                 "north_flow": record.north_flow,
                 "main_flow": record.main_flow,
@@ -254,11 +256,14 @@ class DataStorage:
         data_list = []
         for record in records:
             data_list.append({
+                "id": record.id,
                 "fund_code": record.fund_code,
                 "date": record.date,
-                "unit_nav": float(record.unit_nav) if record.unit_nav else None,
-                "acc_nav": float(record.acc_nav) if record.acc_nav else None,
-                "daily_return": float(record.daily_return) if record.daily_return else None,
+                "unit_nav": float(record.unit_nav) if record.unit_nav is not None else None,
+                "acc_nav": float(record.acc_nav) if record.acc_nav is not None else None,
+                "daily_return": float(record.daily_return) if record.daily_return is not None else None,
+                "source": record.source or "unknown",
+                "fetched_at": record.fetched_at.isoformat() if record.fetched_at else None,
             })
 
         return data_list
