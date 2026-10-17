@@ -224,7 +224,7 @@ class DataStorage:
                         setattr(existing, key, value)
                 else:
                     # 新增记录
-                    new_record = FundNav(**data)
+                    new_record = FundNav(**{"source": "unknown", **data})
                     self._db.add(new_record)
 
             await self._db.commit()

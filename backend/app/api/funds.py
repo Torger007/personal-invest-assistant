@@ -18,6 +18,7 @@ from app.models.fund import Fund, FundNav
 from app.models.user import User, UserFundPosition
 from app.services.data_collector.akshare_source import AkShareSource
 from app.services.data_collector.storage import DataStorage
+from app.services.portfolio_service import get_position_snapshots
 from app.utils.db import get_db
 
 router = APIRouter(prefix="/funds", tags=["个人基金持仓"])
@@ -41,30 +42,15 @@ def _number(value: Decimal, places: str = "0.0001") -> Decimal:
     return value.quantize(Decimal(places), rounding=ROUND_HALF_UP)
 
 
-async def _latest_nav(db: AsyncSession, fund_code: str) -> FundNav | None:
-    return await db.scalar(
-        select(FundNav)
-        .where(FundNav.fund_code == fund_code)
-        .order_by(FundNav.date.desc())
-        .limit(1)
-    )
-
-
-async def _position_dict(db: AsyncSession, position: UserFundPosition) -> dict:
-    latest = await _latest_nav(db, position.fund_code)
+async def _position_dict(db: AsyncSession, position: UserFundPosition, snapshot: dict | None = None) -> dict:
+    if snapshot is None:
+        snapshot = next(
+            item for item in await get_position_snapshots(db, position.user_id)
+            if item["position"].id == position.id
+        )
     shares = Decimal(position.shares)
     cost_amount = Decimal(position.cost_amount)
-    if latest and latest.unit_nav is not None:
-        current_nav = Decimal(latest.unit_nav)
-        current_value = _money(current_nav * shares)
-        updated_at = latest.date.isoformat() if latest.date else None
-        daily_return = float(latest.daily_return) if latest.daily_return is not None else None
-    else:
-        current_value = Decimal(position.calibrated_market_value)
-        current_nav = _number(current_value / shares, "0.000001")
-        updated_at = position.calibrated_at.isoformat()
-        daily_return = None
-
+    current_value = snapshot["market_value"]
     profit = _money(current_value - cost_amount)
     profit_pct = float(profit / cost_amount * Decimal("100")) if cost_amount else None
     return {
@@ -75,12 +61,16 @@ async def _position_dict(db: AsyncSession, position: UserFundPosition) -> dict:
         "shares": float(shares),
         "cost_amount": float(cost_amount),
         "avg_cost": float(position.avg_cost),
-        "current_nav": float(current_nav),
-        "estimated_change_pct": daily_return,
+        "current_nav": float(snapshot["unit_nav"]) if snapshot["unit_nav"] is not None else None,
+        "estimated_change_pct": snapshot["daily_return"],
         "current_market_value": float(current_value),
         "holding_profit": float(profit),
         "holding_profit_pct": profit_pct,
-        "valuation_updated_at": updated_at,
+        "valuation_updated_at": snapshot["valuation_as_of"],
+        "valuation_basis": snapshot["valuation_basis"],
+        "valuation_status": snapshot["valuation_status"],
+        "nav_source": snapshot["nav_source"],
+        "nav_fetched_at": snapshot["nav_fetched_at"],
         "calibrated_at": position.calibrated_at.isoformat(),
         "remark": position.remark or "",
     }
@@ -195,12 +185,11 @@ async def verify_catalog_fund(
 async def get_positions(
     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)
 ):
-    positions = list((await db.execute(
-        select(UserFundPosition)
-        .where(UserFundPosition.user_id == user.id)
-        .order_by(UserFundPosition.created_at.asc())
-    )).scalars().all())
-    return {"positions": [await _position_dict(db, position) for position in positions]}
+    snapshots = await get_position_snapshots(db, user.id)
+    return {"positions": [
+        await _position_dict(db, snapshot["position"], snapshot)
+        for snapshot in snapshots
+    ]}
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED)

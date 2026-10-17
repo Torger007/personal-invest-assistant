@@ -46,3 +46,5 @@ class FundNav(Base):
     unit_nav = Column(Numeric(8, 4))                 # 单位净值
     acc_nav = Column(Numeric(8, 4))                  # 累计净值
     daily_return = Column(Numeric(8, 4))             # 日增长率(%)
+    source = Column(String(50), nullable=False, default="unknown")
+    fetched_at = Column(DateTime, nullable=True)      # UTC; unknown for legacy rows

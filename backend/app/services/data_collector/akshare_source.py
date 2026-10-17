@@ -7,7 +7,7 @@ AKShare 统一数据源
 SSL/UA 补丁在 app.startup_patch 中统一处理，此处直接调用。
 """
 from typing import List, Dict
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 
 import akshare as ak
 import pandas as pd
@@ -156,6 +156,7 @@ class AkShareSource:
         df_unit = df_unit.tail(days)
 
         result = []
+        fetched_at = datetime.now(timezone.utc).replace(tzinfo=None)
         for _, row in df_unit.iterrows():
             try:
                 d = row["净值日期"]
@@ -170,6 +171,8 @@ class AkShareSource:
                     "unit_nav": float(row.get("单位净值", 0) or 0),
                     "acc_nav": acc_map.get(d, float(row.get("单位净值", 0) or 0)),
                     "daily_return": float(row.get("日增长率", 0) or 0),
+                    "source": "akshare_eastmoney",
+                    "fetched_at": fetched_at,
                 })
             except Exception as e:
                 print(f"[AKShare] 解析基金 {fund_code} 净值行失败: {e}")

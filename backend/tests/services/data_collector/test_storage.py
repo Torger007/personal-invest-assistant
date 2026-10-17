@@ -32,6 +32,27 @@ async def storage(db_session):
 class TestDataStorage:
     """数据存储层测试类"""
 
+    async def test_fund_nav_provenance_preserves_unknown_legacy_source(self, storage):
+        from sqlalchemy import select
+        from app.models.fund import FundNav
+        from datetime import datetime
+
+        nav_date = date(2026, 9, 15)
+        await storage.save_fund_nav([{
+            "fund_code": "008163", "date": nav_date, "unit_nav": Decimal("1.2345"),
+        }])
+        record = await storage._db.scalar(select(FundNav).where(FundNav.fund_code == "008163"))
+        assert record.source == "unknown"
+        assert record.fetched_at is None
+
+        fetched_at = datetime(2026, 9, 16, 2, 30)
+        await storage.save_fund_nav([{
+            "fund_code": "008163", "date": nav_date, "unit_nav": Decimal("1.2500"),
+            "source": "akshare_eastmoney", "fetched_at": fetched_at,
+        }])
+        assert record.source == "akshare_eastmoney"
+        assert record.fetched_at == fetched_at
+
     async def test_save_fund_info(self, storage):
         """测试保存和更新基金信息"""
         # 准备测试数据

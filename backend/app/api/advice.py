@@ -54,42 +54,6 @@ async def get_advice_list(db: AsyncSession = Depends(get_db), user: User = Depen
     return {"advice": [_record_to_brief(r) for r in records]}
 
 
-@router.get("/{fund_code}")
-async def get_fund_advice(fund_code: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    """获取单只基金的投资建议详情"""
-    result = await db.execute(
-        select(AdviceRecord)
-        .where(AdviceRecord.fund_code == fund_code)
-        .where(AdviceRecord.user_id == user.id)
-        .order_by(AdviceRecord.date.desc())
-        .limit(1)
-    )
-    record = result.scalar_one_or_none()
-
-    if not record:
-        return {
-            "fund_code": fund_code,
-            "advice": None,
-            "message": "暂无建议记录，请先采集数据并生成建议",
-        }
-
-    extra = _parse_advice_text(record)
-    return {
-        "fund_code": fund_code,
-        "date": str(record.date),
-        "overall_signal": record.overall_signal,
-        "confidence": float(record.confidence) if record.confidence else None,
-        "scores": _parse_scores(record),
-        "market_environment": extra.get("market_environment"),
-        "consistency": extra.get("consistency"),
-        "overall_score": extra.get("overall_score"),
-        "current_position": extra.get("current_position"),
-        "target_position": extra.get("target_position"),
-        "details": extra.get("details"),
-        "advice_text": extra.get("advice_text") or record.advice_text,
-    }
-
-
 @router.get("/portfolio")
 async def get_portfolio_advice(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     """获取组合整体概览：每只基金最新建议 + 聚合统计"""
@@ -102,6 +66,7 @@ async def get_portfolio_advice(db: AsyncSession = Depends(get_db), user: User = 
     confident_count = 0
     bullish = bearish = neutral = 0
     latest_date = None
+    market_env = None
 
     for code in codes:
         result = await db.execute(
@@ -115,6 +80,8 @@ async def get_portfolio_advice(db: AsyncSession = Depends(get_db), user: User = 
         info = portfolio_info.get(code, {})
 
         if record:
+            if market_env is None:
+                market_env = _parse_advice_text(record).get("market_environment")
             conf = float(record.confidence) if record.confidence else 0
             total_confidence += conf
             confident_count += 1
@@ -143,20 +110,6 @@ async def get_portfolio_advice(db: AsyncSession = Depends(get_db), user: User = 
                 "weight": info.get("weight", 0),
                 "latest_advice": None,
             })
-
-    # 取第一条有数据的记录的 market_environment
-    market_env = None
-    if funds:
-        first_record = await db.execute(
-            select(AdviceRecord)
-            .where(AdviceRecord.fund_code == codes[0])
-            .order_by(AdviceRecord.date.desc())
-            .limit(1)
-        )
-        first = first_record.scalar_one_or_none()
-        if first:
-            extra = _parse_advice_text(first)
-            market_env = extra.get("market_environment")
 
     avg_conf = round(total_confidence / confident_count, 1) if confident_count else 0
 
@@ -274,3 +227,39 @@ async def trigger_generate(db: AsyncSession = Depends(get_db), user: User = Depe
             "status": "error",
             "message": f"建议生成失败: {str(e)}",
         }
+
+
+@router.get("/{fund_code}")
+async def get_fund_advice(fund_code: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    """获取单只基金的投资建议详情。通配路由须排在所有固定路径之后。"""
+    result = await db.execute(
+        select(AdviceRecord)
+        .where(AdviceRecord.fund_code == fund_code)
+        .where(AdviceRecord.user_id == user.id)
+        .order_by(AdviceRecord.date.desc())
+        .limit(1)
+    )
+    record = result.scalar_one_or_none()
+
+    if not record:
+        return {
+            "fund_code": fund_code,
+            "advice": None,
+            "message": "暂无建议记录，请先采集数据并生成建议",
+        }
+
+    extra = _parse_advice_text(record)
+    return {
+        "fund_code": fund_code,
+        "date": str(record.date),
+        "overall_signal": record.overall_signal,
+        "confidence": float(record.confidence) if record.confidence else None,
+        "scores": _parse_scores(record),
+        "market_environment": extra.get("market_environment"),
+        "consistency": extra.get("consistency"),
+        "overall_score": extra.get("overall_score"),
+        "current_position": extra.get("current_position"),
+        "target_position": extra.get("target_position"),
+        "details": extra.get("details"),
+        "advice_text": extra.get("advice_text") or record.advice_text,
+    }

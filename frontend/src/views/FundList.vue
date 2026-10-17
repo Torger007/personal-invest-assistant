@@ -17,10 +17,11 @@
             <div class="code">{{ row.fund_code }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="实时估值" width="160" align="right">
+        <el-table-column label="净值与日期" width="180" align="right">
           <template #default="{ row }">
             <span :class="valueClass(row.estimated_change_pct)">{{ formatPct(row.estimated_change_pct) }}</span>
             <div class="hint">{{ formatMoney(row.current_nav, 4) }}</div>
+            <div class="hint">{{ valuationLabel(row) }}</div>
           </template>
         </el-table-column>
         <el-table-column label="持有收益" width="170" align="right">
@@ -29,8 +30,11 @@
             <div class="hint" :class="valueClass(row.holding_profit_pct)">{{ formatPct(row.holding_profit_pct) }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="持有市值" width="160" align="right">
-          <template #default="{ row }">{{ formatMoney(row.current_market_value) }}</template>
+        <el-table-column label="持有估值" width="160" align="right">
+          <template #default="{ row }">
+            {{ formatMoney(row.current_market_value) }}
+            <div v-if="row.valuation_status === 'calibration_fallback'" class="hint">校准值，非今日市值</div>
+          </template>
         </el-table-column>
         <el-table-column label="持仓详情" width="180" align="right">
           <template #default="{ row }">
@@ -104,7 +108,7 @@
           </div>
         </header>
         <section class="holding-summary">
-          <div><span>当前市值</span><strong>{{ formatMoney(detail.current_market_value) }}</strong></div>
+          <div><span>持有估值</span><strong>{{ formatMoney(detail.current_market_value) }}</strong><small>{{ valuationLabel(detail) }}</small></div>
           <div><span>持有收益</span><strong :class="valueClass(detail.holding_profit)">{{ formatMoney(detail.holding_profit) }}</strong><small :class="valueClass(detail.holding_profit_pct)">{{ formatPct(detail.holding_profit_pct) }}</small></div>
           <div><span>持有份额</span><strong>{{ formatShares(detail.shares) }}</strong></div>
           <div><span>平均成本</span><strong>{{ formatMoney(detail.avg_cost, 4) }}</strong></div>
@@ -114,9 +118,9 @@
           <el-descriptions :column="2" border>
             <el-descriptions-item label="校准成本">{{ formatMoney(detail.cost_amount) }}</el-descriptions-item>
             <el-descriptions-item label="校准日期">{{ detail.calibrated_at }}</el-descriptions-item>
-            <el-descriptions-item label="最新估值">{{ formatMoney(detail.current_nav, 4) }}</el-descriptions-item>
-            <el-descriptions-item label="估值涨跌"><span :class="valueClass(detail.estimated_change_pct)">{{ formatPct(detail.estimated_change_pct) }}</span></el-descriptions-item>
-            <el-descriptions-item label="数据更新">{{ detail.valuation_updated_at || '--' }}</el-descriptions-item>
+            <el-descriptions-item label="最新净值">{{ formatMoney(detail.current_nav, 4) }}</el-descriptions-item>
+            <el-descriptions-item label="净值涨跌"><span :class="valueClass(detail.estimated_change_pct)">{{ formatPct(detail.estimated_change_pct) }}</span></el-descriptions-item>
+            <el-descriptions-item label="估值依据">{{ valuationLabel(detail) }}</el-descriptions-item>
             <el-descriptions-item label="备注">{{ detail.remark || '--' }}</el-descriptions-item>
           </el-descriptions>
         </section>
@@ -166,6 +170,7 @@ function resetForm() {
 function formatMoney(value, digits = 2) { return value === null || value === undefined ? '--' : `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: digits, maximumFractionDigits: digits })}` }
 function formatShares(value) { return value === null || value === undefined ? '--' : `${Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 4 })} 份` }
 function formatPct(value) { return value === null || value === undefined ? '--' : `${Number(value) >= 0 ? '+' : ''}${Number(value).toFixed(2)}%` }
+function valuationLabel(position) { return position.valuation_status === 'calibration_fallback' ? `校准值 · ${position.valuation_updated_at || '--'}` : `净值日期 · ${position.valuation_updated_at || '--'}` }
 function valueClass(value) { return Number(value) > 0 ? 'up' : Number(value) < 0 ? 'down' : '' }
 
 async function loadPositions() {

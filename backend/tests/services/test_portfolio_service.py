@@ -1,10 +1,13 @@
 from datetime import date
 from decimal import Decimal
 
+import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.models.user import User, UserFundPosition
+from app.models.fund import FundNav
+from app.api.funds import get_positions
 from app.services.data_collector.scheduler import get_active_portfolio_fund_codes
 from app.services.portfolio_service import get_user_portfolio
 from app.utils.db import Base
@@ -56,6 +59,44 @@ async def test_real_positions_are_aggregated_by_fund_code(db_session):
 
 async def test_user_without_positions_has_empty_portfolio(db_session):
     assert await get_user_portfolio(db_session, "user-1") == []
+
+
+async def test_page_and_portfolio_share_dated_nav_valuation(db_session):
+    from types import SimpleNamespace
+
+    first = make_position("one", "008163", "基金一", "支付宝", "100")
+    second = make_position("two", "005827", "基金二", "银行", "100")
+    db_session.add_all([first, second, FundNav(
+        fund_code="008163", date=date(2026, 9, 15), unit_nav=Decimal("2"),
+        source="akshare_eastmoney",
+    )])
+    await db_session.commit()
+
+    page = (await get_positions(db_session, SimpleNamespace(id="user-1")))["positions"]
+    portfolio = await get_user_portfolio(db_session, "user-1")
+
+    assert page[0]["current_market_value"] == 200.0
+    assert page[0]["valuation_updated_at"] == "2026-09-15"
+    assert page[0]["valuation_basis"] == "shares_times_nav"
+    assert page[1]["current_nav"] is None
+    assert page[1]["valuation_status"] == "calibration_fallback"
+    assert page[1]["valuation_updated_at"] == "2026-09-13"
+    assert portfolio[0]["market_value"] == page[0]["current_market_value"]
+    assert portfolio[0]["weight"] == pytest.approx(2 / 3)
+    assert portfolio[1]["weight"] == pytest.approx(1 / 3)
+    assert portfolio[1]["valuations"][0]["as_of"] == "2026-09-13"
+
+
+async def test_nav_older_than_calibration_does_not_replace_calibration(db_session):
+    db_session.add_all([
+        make_position("one", "008163", "基金一", "支付宝", "125"),
+        FundNav(fund_code="008163", date=date(2026, 9, 12), unit_nav=Decimal("2")),
+    ])
+    await db_session.commit()
+
+    portfolio = await get_user_portfolio(db_session, "user-1")
+    assert portfolio[0]["market_value"] == 125.0
+    assert portfolio[0]["valuations"][0]["basis"] == "calibrated_value"
 
 
 async def test_scheduled_fund_codes_follow_active_users_portfolios(db_session):
