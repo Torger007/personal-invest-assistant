@@ -223,6 +223,8 @@ class DataStorage:
                 if existing:
                     # 更新已有记录
                     for key, value in data.items():
+                        if key == "acc_nav" and value is None:
+                            continue
                         setattr(existing, key, value)
                 else:
                     # 新增记录

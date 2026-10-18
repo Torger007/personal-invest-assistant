@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Numeric, String, UniqueConstraint
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.sql import func
 
 from app.utils.db import Base
@@ -51,6 +51,8 @@ class UserFundPosition(Base):
     calibrated_market_value = Column(Numeric(18, 2), nullable=False)
     calibrated_profit = Column(Numeric(18, 2), nullable=False)
     calibrated_at = Column(Date, nullable=False)
+    calibration_nav_id = Column(Integer, ForeignKey("fund_nav.id"), nullable=True)
+    calibration_basis = Column(String(32), nullable=False, default="manual_calibration")
     remark = Column(String(200))
     created_at = Column(DateTime, default=func.now(), nullable=False)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)

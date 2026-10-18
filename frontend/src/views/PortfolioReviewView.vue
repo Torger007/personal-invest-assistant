@@ -120,6 +120,10 @@
                   <router-link v-if="evidenceLink(fact)" :to="evidenceLink(fact)">查看来源</router-link>
                 </div>
                 <p>截至 {{ fact.as_of || '未知' }} · 读取于 {{ formatTime(fact.read_at) }}</p>
+                <p v-if="fact.values?.position_id">
+                  持有估值 ¥{{ Number(fact.values.market_value).toFixed(2) }} · 来源 {{ fact.source }}
+                  <span v-if="fact.values.calibration_as_of"> · {{ fact.values.calibration_as_of }} 按{{ fact.values.calibration_basis === 'shares_times_nav' ? '净值推算' : '人工校准' }}</span>
+                </p>
                 <details>
                   <summary>查看证据详情</summary>
                   <dl>

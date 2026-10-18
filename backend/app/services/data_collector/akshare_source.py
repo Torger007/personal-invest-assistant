@@ -129,14 +129,19 @@ class AkShareSource:
         try:
             # 单位净值走势
             df_unit = ak.fund_open_fund_info_em(symbol=fund_code, indicator="单位净值走势")
-            # 累计净值走势
-            df_acc = ak.fund_open_fund_info_em(symbol=fund_code, indicator="累计净值走势")
         except Exception as e:
-            print(f"[AKShare] 获取基金 {fund_code} 净值失败: {e}")
+            print(f"[AKShare] 获取基金 {fund_code} 单位净值失败: {e}")
             return []
 
         if df_unit is None or df_unit.empty:
             return []
+
+        # 累计净值仅供补充。其接口单独失败时，仍要保存已取得的单位净值。
+        try:
+            df_acc = ak.fund_open_fund_info_em(symbol=fund_code, indicator="累计净值走势")
+        except Exception as e:
+            print(f"[AKShare] 获取基金 {fund_code} 累计净值失败，保留单位净值: {e}")
+            df_acc = None
 
         # 合并累计净值到单位净值表
         acc_map = {}
@@ -169,7 +174,7 @@ class AkShareSource:
                     "fund_code": fund_code,
                     "date": d,
                     "unit_nav": float(row.get("单位净值", 0) or 0),
-                    "acc_nav": acc_map.get(d, float(row.get("单位净值", 0) or 0)),
+                    "acc_nav": acc_map.get(d),
                     "daily_return": float(row.get("日增长率", 0) or 0),
                     "source": "akshare_eastmoney",
                     "fetched_at": fetched_at,

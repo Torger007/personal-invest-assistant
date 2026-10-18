@@ -54,7 +54,7 @@
 
     <el-dialog v-model="calibrationVisible" :title="editingPosition ? '校准资产' : '新增持仓'" width="640px" :close-on-click-modal="false" class="calibration-dialog">
       <div class="calibration-copy">
-        截至今天（{{ todayLabel }}），我持有
+        我持有
         <el-popover v-model:visible="fundPickerVisible" trigger="click" placement="bottom-start" :width="420" @show="loadHeldFundOptions">
           <template #reference>
             <button type="button" class="fund-picker-trigger" :class="{ placeholder: !form.fund }" :disabled="!!editingPosition">
@@ -71,15 +71,22 @@
               <el-empty v-if="!searching && !pickerFunds.length" :image-size="56" :description="emptyFundPickerText" />
             </div>
           </section>
-        </el-popover>，市值
-        <el-input-number v-model="form.marketValue" :min="0.01" :precision="2" controls-position="right" class="inline-number" /> 元，
-        目前持有收益为
+        </el-popover>，持有收益为
         <el-input-number v-model="form.holdingProfit" :precision="2" controls-position="right" class="inline-number" /> 元，
         共计
         <el-input-number v-model="form.shares" :min="0.0001" :precision="4" controls-position="right" class="inline-number" /> 份。
       </div>
-      <el-alert title="校准将作为今天的绝对基准，重置今天之前的累计计算。" type="warning" :closable="false" show-icon />
+      <el-alert title="按已确认份额与同日已公布净值计算市值和成本；待确认交易等账户项目可能使结果与平台展示金额不同。" type="info" :closable="false" show-icon />
+      <el-alert v-if="saveError" :title="saveError" type="warning" :closable="false" show-icon class="save-alert">
+        <template v-if="latestNav" #default>
+          <div>最新已公布净值为 {{ latestNav.date }}（{{ formatMoney(latestNav.unit_nav, 4) }}；{{ latestNav.source }}；{{ formatNavFetchedAt(latestNav.fetched_at) }}）。</div>
+          <el-button v-if="canConfirmLatest && latestNav.date !== form.profitAsOf" link type="primary" @click="confirmLatestNav">如果持有收益也截至该日，确认使用 {{ formatNavDate(latestNav.date) }} 校准</el-button>
+        </template>
+      </el-alert>
       <el-form label-position="left" label-width="64px" class="position-form">
+        <el-form-item label="收益日期" required>
+          <el-date-picker v-model="form.profitAsOf" type="date" value-format="YYYY-MM-DD" :disabled-date="disabledProfitDate" placeholder="本次收益对应的净值日期" class="full-width" @change="profitDateAutomatic = false" />
+        </el-form-item>
         <el-form-item label="平台" required>
           <el-select v-model="form.platform" :disabled="!!editingPosition" placeholder="选择来源平台" class="full-width">
             <el-option v-for="platform in platforms" :key="platform" :label="platform" :value="platform" />
@@ -121,6 +128,7 @@
             <el-descriptions-item label="最新净值">{{ formatMoney(detail.current_nav, 4) }}</el-descriptions-item>
             <el-descriptions-item label="净值涨跌"><span :class="valueClass(detail.estimated_change_pct)">{{ formatPct(detail.estimated_change_pct) }}</span></el-descriptions-item>
             <el-descriptions-item label="估值依据">{{ valuationLabel(detail) }}</el-descriptions-item>
+            <el-descriptions-item label="校准口径">{{ detail.calibration_basis === 'shares_times_nav' ? '净值推算' : '人工校准' }}</el-descriptions-item>
             <el-descriptions-item label="备注">{{ detail.remark || '--' }}</el-descriptions-item>
           </el-descriptions>
         </section>
@@ -155,16 +163,32 @@ const fundSearchKeyword = ref('')
 const searching = ref(false)
 const catalogInitialized = ref(true)
 const saving = ref(false)
+const saveError = ref('')
+const latestNav = ref(null)
+const canConfirmLatest = ref(false)
+const profitDateAutomatic = ref(true)
 const chartRef = ref(null)
 let chart = null
 let fundSearchTimer = null
 let fundSearchRequest = 0
 const platforms = ['支付宝', '天天基金', '银行', '券商', '微信理财通', '其他']
-const form = reactive({ fund: null, platform: '', marketValue: undefined, holdingProfit: undefined, shares: undefined, remark: '' })
-const todayLabel = computed(() => new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric' }).format(new Date()))
+function beijingToday() {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date())
+  const value = Object.fromEntries(parts.map(part => [part.type, part.value]))
+  return `${value.year}-${value.month}-${value.day}`
+}
+function disabledProfitDate(date) {
+  const localDate = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+  return localDate > beijingToday()
+}
+const form = reactive({ fund: null, platform: '', holdingProfit: undefined, shares: undefined, profitAsOf: beijingToday(), remark: '' })
 
 function resetForm() {
-  Object.assign(form, { fund: null, platform: '', marketValue: undefined, holdingProfit: undefined, shares: undefined, remark: '' })
+  Object.assign(form, { fund: null, platform: '', holdingProfit: undefined, shares: undefined, profitAsOf: beijingToday(), remark: '' })
+  saveError.value = ''
+  latestNav.value = null
+  canConfirmLatest.value = false
+  profitDateAutomatic.value = true
   searchResults.value = []
   fundSearchKeyword.value = ''
   fundPickerVisible.value = false
@@ -172,7 +196,15 @@ function resetForm() {
 function formatMoney(value, digits = 2) { return value === null || value === undefined ? '--' : `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: digits, maximumFractionDigits: digits })}` }
 function formatShares(value) { return value === null || value === undefined ? '--' : `${Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 4 })} 份` }
 function formatPct(value) { return value === null || value === undefined ? '--' : `${Number(value) >= 0 ? '+' : ''}${Number(value).toFixed(2)}%` }
-function valuationLabel(position) { return position.valuation_status === 'calibration_fallback' ? `校准值 · ${position.valuation_updated_at || '--'}` : `净值日期 · ${position.valuation_updated_at || '--'}` }
+function formatNavDate(value) { const [, month, day] = (value || '').split('-'); return month && day ? `${Number(month)}月${Number(day)}日` : '--' }
+function formatNavFetchedAt(value) {
+  if (!value) return '获取时间未知'
+  const utcValue = /(?:Z|[+-]\d\d:\d\d)$/i.test(value) ? value : `${value}Z`
+  const fetched = new Date(utcValue)
+  if (Number.isNaN(fetched.getTime())) return '获取时间未知'
+  return `北京时间 ${new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(fetched)} 获取`
+}
+function valuationLabel(position) { return position.valuation_status === 'calibration_fallback' ? `人工校准 · ${position.valuation_updated_at || '--'}` : `净值推算 · ${position.valuation_updated_at || '--'}` }
 function valueClass(value) { return Number(value) > 0 ? 'up' : Number(value) < 0 ? 'down' : '' }
 
 async function loadPositions() {
@@ -182,7 +214,11 @@ async function loadPositions() {
 function openCreate() { editingPosition.value = null; resetForm(); calibrationVisible.value = true }
 function openCalibration(position) {
   editingPosition.value = position
-  Object.assign(form, { fund: { code: position.fund_code, name: position.fund_name }, platform: position.platform, marketValue: position.current_market_value, holdingProfit: position.holding_profit, shares: position.shares, remark: position.remark || '' })
+  Object.assign(form, { fund: { code: position.fund_code, name: position.fund_name }, platform: position.platform, holdingProfit: position.holding_profit, shares: position.shares, profitAsOf: beijingToday(), remark: position.remark || '' })
+  saveError.value = ''
+  latestNav.value = null
+  canConfirmLatest.value = false
+  profitDateAutomatic.value = true
   fundPickerVisible.value = false
   fundSearchKeyword.value = ''
   calibrationVisible.value = true
@@ -228,17 +264,38 @@ async function selectFund(fund) {
   }
 }
 async function savePosition() {
-  if (!form.fund || !form.platform || !form.marketValue || form.holdingProfit === undefined || !form.shares) { ElMessage.warning('请完整填写基金、市值、收益、份额和平台'); return }
-  const payload = { fund_code: form.fund.code, fund_name: form.fund.name, platform: form.platform, market_value: form.marketValue, holding_profit: form.holdingProfit, shares: form.shares, remark: form.remark }
+  if (profitDateAutomatic.value) form.profitAsOf = beijingToday()
+  if (!form.fund || !form.platform || form.holdingProfit === undefined || form.holdingProfit === null || !form.shares || !form.profitAsOf) { ElMessage.warning('请完整填写基金、份额、收益、收益日期和平台'); return }
+  const payload = { fund_code: form.fund.code, fund_name: form.fund.name, platform: form.platform, holding_profit: form.holdingProfit, shares: form.shares, profit_as_of: form.profitAsOf, remark: form.remark }
+  saveError.value = ''
+  latestNav.value = null
+  canConfirmLatest.value = false
   saving.value = true
   try {
-    if (editingPosition.value) await fundApi.calibrate(editingPosition.value.id, payload)
-    else await fundApi.create(payload)
-    ElMessage.success(editingPosition.value ? '持仓已按今天的数据校准' : '持仓已新增')
+    const { data } = editingPosition.value ? await fundApi.calibrate(editingPosition.value.id, payload) : await fundApi.create(payload)
+    ElMessage.success(`持仓已按 ${data.calibration_nav.date} 的净值${editingPosition.value ? '校准' : '新增'}`)
     calibrationVisible.value = false
     await loadPositions()
     if (detailVisible.value && editingPosition.value) await openDetail(positions.value.find(item => item.id === editingPosition.value.id))
-  } catch (error) { ElMessage.error(error.response?.data?.detail || '保存持仓失败') } finally { saving.value = false }
+  } catch (error) {
+    const detail = error.response?.data?.detail
+    saveError.value = detail && !Array.isArray(detail) && typeof detail === 'object'
+      ? `${detail.message}${detail.reason ? `：${detail.reason}` : ''}`
+      : (typeof detail === 'string' ? detail : '保存持仓失败，请检查填写内容')
+    latestNav.value = detail && !Array.isArray(detail) && typeof detail === 'object' ? detail.latest_nav : null
+    canConfirmLatest.value = ['nav_date_unavailable', 'nav_date_non_trading'].includes(detail?.code)
+    ElMessage.error(saveError.value)
+  } finally { saving.value = false }
+}
+async function confirmLatestNav() {
+  if (!latestNav.value) return
+  const target = latestNav.value.date
+  try {
+    await ElMessageBox.confirm(`请确认填写的持有收益也是截至 ${target}，将使用该日净值计算市值和成本。`, '确认收益日期', { type: 'warning', confirmButtonText: '确认并校准', cancelButtonText: '取消' })
+    form.profitAsOf = target
+    profitDateAutomatic.value = false
+    await savePosition()
+  } catch (error) { if (error !== 'cancel' && error !== 'close') ElMessage.error('确认失败') }
 }
 async function openDetail(position) {
   if (!position) return
@@ -277,6 +334,7 @@ onBeforeUnmount(() => { clearTimeout(fundSearchTimer); chart?.dispose() })
 .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
 .eyebrow { margin: 0 0 4px; color: var(--color-primary); font-size: 13px; font-weight: 600; }.page-header h2 { margin: 0; font-size: 28px; }.subtitle { color: var(--color-foreground-muted); margin: 7px 0 0; }.table-card { border-radius: 16px; }.fund-name { border: 0; padding: 0; color: var(--color-foreground); background: none; cursor: pointer; font-size: 16px; font-weight: 650; text-align: left; }.fund-name:hover { color: var(--color-primary); }.code, .hint { margin-top: 5px; color: var(--color-foreground-muted); font-size: 13px; }.up { color: var(--color-up); }.down { color: var(--color-down); }
 .calibration-copy { color: var(--color-foreground); font-size: 20px; line-height: 2.6; margin: 6px 0 22px; }.fund-picker-trigger { width: 250px; min-height: 38px; padding: 0 12px; border: 0; border-bottom: 2px solid #94a3b8; background: transparent; color: var(--color-foreground); cursor: pointer; font: inherit; text-align: left; vertical-align: middle; }.fund-picker-trigger.placeholder { color: var(--color-foreground-muted); }.fund-picker-trigger:disabled { cursor: default; }.fund-picker-panel { padding: 4px; }.picker-label { margin: 14px 0 8px; color: var(--color-foreground-muted); font-size: 13px; }.picker-results { min-height: 100px; max-height: 250px; overflow-y: auto; }.picker-option { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 16px; border: 0; border-radius: 6px; padding: 10px; background: transparent; color: var(--color-foreground); cursor: pointer; text-align: left; }.picker-option:hover { background: var(--color-muted); }.picker-option small { flex: 0 0 auto; color: var(--color-foreground-muted); }.inline-number { width: 122px; vertical-align: middle; }.position-form { margin-top: 28px; }.full-width { width: 100%; }
+.save-alert { margin-top: 16px; }
 .position-drawer { padding: 30px; }.drawer-header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; border-bottom: 1px solid var(--color-border); padding-bottom: 20px; }.drawer-header h2 { margin: 0 0 8px; font-size: 24px; }.drawer-header p { margin: 0; color: var(--color-foreground-muted); }.drawer-header span { padding: 0 5px; }.drawer-actions { display: flex; }.holding-summary { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; background: var(--color-border); margin: 24px 0; border: 1px solid var(--color-border); border-radius: 12px; overflow: hidden; }.holding-summary div { min-height: 100px; padding: 16px; background: var(--color-surface); }.holding-summary span, .holding-summary small { display: block; color: var(--color-foreground-muted); font-size: 13px; }.holding-summary strong { display: block; margin-top: 8px; font-size: 21px; }.holding-summary small { margin-top: 4px; }.detail-section { margin-top: 28px; }.detail-section h3 { margin: 0 0 14px; font-size: 16px; }.chart { height: 300px; }
 @media (max-width: 720px) { .fund-list { padding: 16px; }.page-header { align-items: flex-start; gap: 16px; flex-direction: column; }.calibration-copy { font-size: 16px; line-height: 2.8; }.fund-picker-trigger { width: 100%; }.inline-number { width: 130px; }.drawer-header { flex-direction: column; }.position-drawer { padding: 20px; } }
 </style>

@@ -38,6 +38,11 @@ async def get_position_snapshots(session: AsyncSession, user_id: str) -> list[di
             nav and nav.date and nav.date >= position.calibrated_at
             and nav.unit_nav is not None and Decimal(nav.unit_nav) > 0
         )
+        if not use_nav and position.calibration_nav_id is not None:
+            saved_nav = await session.get(FundNav, position.calibration_nav_id)
+            if saved_nav and saved_nav.date == position.calibrated_at and saved_nav.unit_nav and saved_nav.unit_nav > 0:
+                nav = saved_nav
+                use_nav = True
         value = (
             _money(Decimal(position.shares) * Decimal(nav.unit_nav))
             if use_nav else Decimal(position.calibrated_market_value)
@@ -47,6 +52,8 @@ async def get_position_snapshots(session: AsyncSession, user_id: str) -> list[di
             "market_value": value,
             "valuation_as_of": (nav.date if use_nav else position.calibrated_at).isoformat(),
             "valuation_basis": "shares_times_nav" if use_nav else "calibrated_value",
+            "calibration_basis": position.calibration_basis or "manual_calibration",
+            "calibration_nav_id": position.calibration_nav_id,
             "valuation_status": "nav" if use_nav else "calibration_fallback",
             "unit_nav": Decimal(nav.unit_nav) if use_nav else None,
             "daily_return": float(nav.daily_return) if use_nav and nav.daily_return is not None else None,
@@ -87,6 +94,9 @@ async def get_user_portfolio(session: AsyncSession, user_id: str) -> list[dict]:
             "nav_fetched_at": snapshot["nav_fetched_at"],
             "source": snapshot["nav_source"] if snapshot["valuation_status"] == "nav" else "user_calibration",
             "source_record_id": snapshot["source_record_id"],
+            "calibration_basis": snapshot["calibration_basis"],
+            "calibration_as_of": position.calibrated_at.isoformat(),
+            "calibration_nav_id": snapshot["calibration_nav_id"],
         })
 
     total_market_value = sum((item["market_value"] for item in aggregated.values()), Decimal("0"))

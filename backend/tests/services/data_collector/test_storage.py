@@ -66,6 +66,23 @@ class TestDataStorage:
         history = await storage.get_fund_nav_history("008163", days=1)
         assert history[0]["daily_return"] == 0.0
 
+    async def test_partial_refresh_does_not_erase_accumulated_nav(self, storage):
+        from sqlalchemy import select
+        from app.models.fund import FundNav
+
+        nav_date = date(2026, 10, 16)
+        await storage.save_fund_nav([{
+            "fund_code": "008163", "date": nav_date,
+            "unit_nav": Decimal("1.0700"), "acc_nav": Decimal("1.7859"),
+        }])
+        await storage.save_fund_nav([{
+            "fund_code": "008163", "date": nav_date,
+            "unit_nav": Decimal("1.0749"), "acc_nav": None,
+        }])
+        record = await storage._db.scalar(select(FundNav).where(FundNav.fund_code == "008163"))
+        assert record.unit_nav == Decimal("1.0749")
+        assert record.acc_nav == Decimal("1.7859")
+
     async def test_save_fund_info(self, storage):
         """测试保存和更新基金信息"""
         # 准备测试数据

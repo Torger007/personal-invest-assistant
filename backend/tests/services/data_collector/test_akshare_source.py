@@ -39,3 +39,22 @@ def test_get_fund_info_returns_code_when_single_fund_endpoint_fails(monkeypatch)
     )
 
     assert AkShareSource().get_fund_info("005827") == {"code": "005827"}
+
+
+def test_unit_nav_survives_optional_accumulated_nav_failure(monkeypatch):
+    from datetime import date
+
+    def fake_nav(*, symbol, indicator):
+        assert symbol == "008163"
+        if indicator == "累计净值走势":
+            raise RuntimeError("accumulated NAV temporarily unavailable")
+        return pd.DataFrame([{"净值日期": date(2026, 10, 16), "单位净值": 1.0749, "日增长率": 0.17}])
+
+    monkeypatch.setattr(
+        "app.services.data_collector.akshare_source.ak.fund_open_fund_info_em", fake_nav,
+    )
+    records = AkShareSource().get_fund_nav("008163", 7)
+    assert len(records) == 1
+    assert records[0]["date"] == date(2026, 10, 16)
+    assert records[0]["unit_nav"] == 1.0749
+    assert records[0]["acc_nav"] is None

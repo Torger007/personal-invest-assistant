@@ -44,6 +44,9 @@ class ValuationRow(OutputRow):
     source: str = "unknown"
     source_record_id: str | int
     nav_fetched_at: str | None = None
+    calibration_basis: str = "manual_calibration"
+    calibration_as_of: str | None = None
+    calibration_nav_id: int | None = None
 
 
 class PortfolioFund(OutputRow):
@@ -163,7 +166,10 @@ def _valuation_fact(call_id: str, value: ValuationRow, read_at: str) -> Evidence
          if value.status == "nav" else f"user_fund_positions:{value.source_record_id}"),
         value.as_of, read_at, "CNY", value.basis,
         {"position_id": value.position_id, "shares": value.shares,
-         "unit_nav": value.unit_nav, "market_value": value.market_value},
+         "unit_nav": value.unit_nav, "market_value": value.market_value,
+         "calibration_basis": value.calibration_basis,
+         "calibration_as_of": value.calibration_as_of,
+         "calibration_nav_id": value.calibration_nav_id},
         source_fetched_at=value.nav_fetched_at,
         flags=["calibration_fallback"] if value.status != "nav" else [],
     )
