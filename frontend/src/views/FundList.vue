@@ -135,11 +135,13 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts'
+import { useRoute } from 'vue-router'
 import { fundApi } from '../api'
 
+const route = useRoute()
 const positions = ref([])
 const loading = ref(false)
 const calibrationVisible = ref(false)
@@ -258,7 +260,15 @@ function renderChart() {
   const history = detail.value.history
   chart.setOption({ tooltip: { trigger: 'axis' }, legend: { data: ['持有市值', '持有收益'] }, grid: { left: 56, right: 24, top: 42, bottom: 38 }, xAxis: { type: 'category', data: history.map(item => item.date) }, yAxis: { type: 'value', scale: true }, series: [{ name: '持有市值', type: 'line', smooth: true, data: history.map(item => item.market_value), lineStyle: { color: '#59728f' } }, { name: '持有收益', type: 'line', smooth: true, data: history.map(item => item.holding_profit), lineStyle: { color: '#d85040' } }] })
 }
-onMounted(loadPositions)
+async function focusLinkedPosition() {
+  const positionId = route.query.positionId
+  if (!positionId) return
+  const position = positions.value.find(item => String(item.id) === String(positionId))
+  if (position) await openDetail(position)
+  else ElMessage.warning('该持仓记录已不存在或不属于当前用户')
+}
+onMounted(async () => { await loadPositions(); await focusLinkedPosition() })
+watch(() => route.query.positionId, focusLinkedPosition)
 onBeforeUnmount(() => { clearTimeout(fundSearchTimer); chart?.dispose() })
 </script>
 

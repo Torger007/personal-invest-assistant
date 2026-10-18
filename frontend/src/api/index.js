@@ -84,6 +84,7 @@ export const fundApi = {
 export const adviceApi = {
   getList: () => api.get('/advice/'),
   getFundAdvice: (code) => api.get(`/advice/${code}`),
+  getAdviceRecord: (recordId) => api.get(`/advice/records/${encodeURIComponent(recordId)}`),
   getPortfolio: () => api.get('/advice/portfolio'),
   getHistory: (code, limit = 30) => api.get(`/advice/history/${code}`, { params: { limit } }),
   getCompare: () => api.get('/advice/compare'),
@@ -118,6 +119,8 @@ export const agentApi = {
   getConversation: (conversationId) => api.get(`/agent/conversations/${conversationId}`),
   archiveConversation: (conversationId) => api.post(`/agent/conversations/${conversationId}/archive`),
   getReport: (analysisId) => api.get(`/agent/reports/${analysisId}`),
+  getPortfolioReviews: (limit = 30) => api.get('/agent/portfolio-reviews', { params: { limit } }),
+  getPortfolioReview: (reviewId) => api.get(`/agent/portfolio-reviews/${encodeURIComponent(reviewId)}`),
   subscribeAnalysis: (taskId, onEvent) => subscribeSse(`/api/agent/analyze/${taskId}/events`, onEvent)
 }
 

@@ -14,6 +14,11 @@ def test_review_memory_migration_creates_scoped_tables():
     migration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migration)
     assert migration.down_revision == "d1e2f3a4b5c6"
+    heartbeat_path = path.parent / "b2c3d4e5f607_add_portfolio_review_heartbeat.py"
+    heartbeat_spec = importlib.util.spec_from_file_location("review_heartbeat_migration", heartbeat_path)
+    heartbeat_migration = importlib.util.module_from_spec(heartbeat_spec)
+    heartbeat_spec.loader.exec_module(heartbeat_migration)
+    assert heartbeat_migration.down_revision == migration.revision
 
     engine = sa.create_engine("sqlite:///:memory:")
     with engine.begin() as connection:
@@ -25,6 +30,10 @@ def test_review_memory_migration_creates_scoped_tables():
         review_columns = {column["name"] for column in inspector.get_columns("portfolio_reviews")}
         assert {"user_id", "previous_review_id", "preference_version", "result",
                 "evidence_snapshot", "quality_report", "status", "error"} <= review_columns
+        heartbeat_migration.op = Operations(MigrationContext.configure(connection))
+        heartbeat_migration.upgrade()
+        assert "heartbeat_at" in {column["name"] for column in sa.inspect(connection).get_columns("portfolio_reviews")}
+        heartbeat_migration.downgrade()
         migration.downgrade()
         assert "portfolio_reviews" not in sa.inspect(connection).get_table_names()
     engine.dispose()

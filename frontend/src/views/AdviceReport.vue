@@ -277,11 +277,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, nextTick, onBeforeUnmount, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
+import { useRoute } from 'vue-router'
 import { adviceApi } from '../api'
 
+const route = useRoute()
 // ============== 状态 ==============
 const loading = ref(false)
 const generating = ref(false)
@@ -410,10 +412,10 @@ const handleGenerate = async () => {
   }
 }
 
-const openDetail = async (code, name) => {
+const openDetail = async (code, name, recordId = null) => {
   detailFundName.value = name
   try {
-    const { data } = await adviceApi.getFundAdvice(code)
+    const { data } = recordId ? await adviceApi.getAdviceRecord(recordId) : await adviceApi.getFundAdvice(code)
     detail.value = data
     detailVisible.value = true
     await nextTick()
@@ -656,10 +658,18 @@ const resizeAll = () => {
   detailTrendChart?.resize()
 }
 
-onMounted(() => {
-  loadData()
+async function focusLinkedAdvice() {
+  const code = route.query.fundCode
+  if (!code) return
+  const fund = portfolioFunds.value.find(item => item.fund_code === code)
+  await openDetail(code, fund?.fund_name || code, route.query.recordId || null)
+}
+onMounted(async () => {
+  await loadData()
+  await focusLinkedAdvice()
   window.addEventListener('resize', resizeAll)
 })
+watch(() => [route.query.fundCode, route.query.recordId], focusLinkedAdvice)
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', resizeAll)

@@ -127,6 +127,8 @@ class ConstrainedAgentOrchestrator:
                     "skill_id": skill.id,
                     "skill_instructions": skill.instructions,
                     "allowed_tools": sorted(available_tools),
+                    "required_tools": sorted(skill.required_tools) if attempt == 0 else [],
+                    "plan_phase": "initial" if attempt == 0 else "repair",
                     "remaining_tool_calls": skill.max_tool_calls - len(all_results),
                     "remaining_supplement_calls": skill.max_supplement_calls - supplemental_calls,
                 })
@@ -136,6 +138,8 @@ class ConstrainedAgentOrchestrator:
                     validator.validate(
                         plan, allowed_tools=available_tools, expected_intent=skill.id,
                     )
+                    if attempt == 0 and not skill.required_tools <= {step.tool for step in plan.steps}:
+                        raise PlanValidationError("初次计划缺少 Skill 必需工具")
                     if attempt and any(step.tool not in skill.supplement_tools for step in plan.steps):
                         raise PlanValidationError("补查计划包含非补查工具")
                     if len(all_results) + len(plan.steps) > skill.max_tool_calls:
@@ -160,13 +164,24 @@ class ConstrainedAgentOrchestrator:
                         "intent": plan.intent, "tools": [step.tool for step in plan.steps],
                     })
                 else:
-                    quality = self.quality_gate.assess(
-                        fallback_plan.intent, all_results,
-                        today=assessment_date, allow_replan=False,
-                        required_tools=skill.required_tools if skill else None,
-                    )
-                    quality.reasons.append(f"重规划失败：{error}")
-                    return ConstrainedRun(plans, all_results, quality, fallback_used)
+                    repair = self._repair_plan(
+                        skill, planning_context.get("quality_report") or {},
+                        all_results, used_calls, supplemental_calls,
+                    ) if skill else None
+                    if repair is None:
+                        quality = self.quality_gate.assess(
+                            fallback_plan.intent, all_results,
+                            today=assessment_date, allow_replan=False,
+                            required_tools=skill.required_tools if skill else None,
+                        )
+                        quality.reasons.append("补查计划不可安全执行，已保留可核对的数据")
+                        return ConstrainedRun(plans, all_results, quality, fallback_used)
+                    plan = repair
+                    fallback_used = True
+                    await self._emit(emit, {
+                        "type": "plan_fallback", "reason": str(error),
+                        "intent": plan.intent, "tools": [step.tool for step in plan.steps],
+                    })
 
             plans.append(plan)
             await self._emit(emit, {
@@ -227,6 +242,40 @@ class ConstrainedAgentOrchestrator:
                 required_tools=skill.required_tools if skill else None,
             ),
             fallback_used,
+        )
+
+    @staticmethod
+    def _repair_plan(
+        skill: SkillDefinition, quality: dict[str, Any], results: list[dict[str, Any]],
+        used_calls: dict[str, int], supplemental_calls: int,
+    ) -> AgentPlan | None:
+        """Retry only absent or transiently failed reads within the remaining budget."""
+        remaining = min(
+            skill.max_tool_calls - len(results),
+            skill.max_supplement_calls - supplemental_calls,
+        )
+        if remaining <= 0:
+            return None
+        candidates = []
+        for name in [*(quality.get("missing") or []), *(quality.get("failed") or [])]:
+            if name in candidates or name not in skill.supplement_tools:
+                continue
+            observations = [item["result"] for item in results if item["tool_name"] == name]
+            policy = get_tool_policy(name)
+            if policy and used_calls.get(name, 0) < policy.max_calls and (
+                not observations or observations[-1].get("status") in {"no_data", "error"}
+            ):
+                candidates.append(name)
+        if not candidates:
+            return None
+        return AgentPlan(
+            intent=skill.id,
+            steps=[{
+                "id": f"retry_{name}", "tool": name, "args": {},
+                "purpose": "补查暂时缺失的数据", "required": True,
+            } for name in candidates[:remaining]],
+            success_profile="portfolio_review_repair",
+            user_visible_reason="按质量门补查暂时缺失的数据",
         )
 
     @staticmethod

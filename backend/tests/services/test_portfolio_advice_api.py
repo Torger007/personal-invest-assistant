@@ -4,11 +4,13 @@ from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
 
+import pytest
 import pytest_asyncio
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from starlette.routing import Match
 
-from app.api.advice import get_portfolio_advice, router
+from app.api.advice import get_advice_record, get_portfolio_advice, router
 from app.models.advice import AdviceRecord
 from app.models.user import UserFundPosition
 from app.utils.db import Base
@@ -53,3 +55,18 @@ async def test_portfolio_market_environment_is_user_scoped(db_session):
     result = await get_portfolio_advice(db_session, SimpleNamespace(id="user-1"))
     assert result["market_environment"] == "my environment"
     assert result["funds"][0]["latest_advice"]["date"] == "2026-09-15"
+
+
+async def test_exact_advice_evidence_link_is_user_scoped(db_session):
+    record = AdviceRecord(user_id="user-1", fund_code="008163", date=date(2026, 9, 15),
+                          overall_signal="持有观望")
+    db_session.add(record)
+    await db_session.commit()
+    scope = {"type": "http", "path": f"/advice/records/{record.id}", "method": "GET"}
+    first_match = next(route for route in router.routes if route.matches(scope)[0] == Match.FULL)
+    assert first_match.endpoint is get_advice_record
+    detail = await get_advice_record(record.id, db_session, SimpleNamespace(id="user-1"))
+    assert detail["record_id"] == record.id
+    with pytest.raises(HTTPException) as error:
+        await get_advice_record(record.id, db_session, SimpleNamespace(id="user-2"))
+    assert error.value.status_code == 404

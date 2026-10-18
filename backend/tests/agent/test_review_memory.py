@@ -1,10 +1,11 @@
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy import update
 
 from app.agent.contracts import QualityReport, QualityStatus
 from app.agent.orchestrator import ConstrainedRun
@@ -16,6 +17,7 @@ from app.agent.skills.portfolio_review.comparison import build_verified_changes
 from app.agent.skills.portfolio_review.result import PortfolioReviewResultBuilder
 from app.agent.providers import LLMResponse, ToolCall
 from app.models import User
+from app.models.agent import PortfolioReview
 from app.api import agent as agent_api
 import app.agent.service as service_module
 from app.utils.db import Base
@@ -123,6 +125,13 @@ async def test_successful_review_is_only_same_user_baseline_and_survives_new_ses
     await memory.stop_review("user-1", second_id, error="模型失败")
     third_id, previous, _ = await memory.start_review("user-1", skill)
     assert previous["id"] == first_id  # failed run never becomes baseline
+    await memory.mark_orphaned_runs()
+    assert (await memory.get_review("user-1", third_id))["status"] == "running"
+    async with memory.session_factory() as session:
+        await session.execute(update(PortfolioReview).where(PortfolioReview.id == third_id)
+                              .values(heartbeat_at=datetime.now(timezone.utc).replace(tzinfo=None)
+                                      - timedelta(minutes=2)))
+        await session.commit()
     await memory.mark_orphaned_runs()
     assert (await memory.get_review("user-1", third_id))["status"] == "interrupted"
     assert len(await memory.list_reviews("user-1")) == 3

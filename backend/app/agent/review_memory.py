@@ -1,13 +1,13 @@
 """User-owned preference state and durable portfolio review records."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 
 from app.agent.contracts import EvidenceSnapshot, PortfolioReviewResult, QualityReport
 from app.agent.evidence import select_saved_evidence_snapshot
@@ -17,6 +17,9 @@ from app.agent.skills.registry import SkillDefinition
 from app.models.agent import PortfolioReview, UserPreference
 from app.services.decision_service import decision_service
 from app.utils.db import AsyncSessionLocal
+
+
+RUN_LEASE_SECONDS = 45
 
 
 def _utcnow() -> datetime:
@@ -118,7 +121,8 @@ class ReviewMemory:
             review_id = str(uuid4())
             session.add(PortfolioReview(
                 id=review_id, user_id=user_id, status="running", contract_valid=False,
-                started_at=_utcnow(), previous_review_id=previous["id"] if previous else None,
+                started_at=_utcnow(), heartbeat_at=_utcnow(),
+                previous_review_id=previous["id"] if previous else None,
                 preference_version=preference["version"],
                 skill_id=skill.id, skill_version=skill.version,
                 prompt_version=sha256(
@@ -177,15 +181,29 @@ class ReviewMemory:
                 row.completed_at = _utcnow()
                 await session.commit()
 
-    async def mark_orphaned_runs(self) -> None:
-        """Single-process deployment: runs surviving a restart cannot resume."""
+    async def heartbeat(self, user_id: str, review_id: str) -> bool:
         async with self.session_factory() as session:
+            result = await session.execute(update(PortfolioReview)
+                .where(PortfolioReview.id == review_id, PortfolioReview.user_id == user_id,
+                       PortfolioReview.status == "running")
+                .values(heartbeat_at=_utcnow()))
+            await session.commit()
+            return bool(result.rowcount)
+
+    async def mark_orphaned_runs(self) -> None:
+        """Expire only runs without a recent heartbeat from any process."""
+        async with self.session_factory() as session:
+            cutoff = _utcnow() - timedelta(seconds=RUN_LEASE_SECONDS)
             await session.execute(update(PortfolioReview)
-                .where(PortfolioReview.status == "running")
-                .values(status="interrupted", error="服务重启后运行中断，可重新发起", completed_at=_utcnow()))
+                .where(PortfolioReview.status == "running",
+                       or_(PortfolioReview.heartbeat_at <= cutoff,
+                           and_(PortfolioReview.heartbeat_at.is_(None),
+                                PortfolioReview.started_at <= cutoff)))
+                .values(status="interrupted", error="运行心跳超时，可重新发起", completed_at=_utcnow()))
             await session.commit()
 
     async def get_review(self, user_id: str, review_id: str) -> dict:
+        await self.mark_orphaned_runs()
         async with self.session_factory() as session:
             row = await session.scalar(select(PortfolioReview).where(
                 PortfolioReview.id == review_id, PortfolioReview.user_id == user_id,
@@ -196,6 +214,7 @@ class ReviewMemory:
 
     async def list_reviews(self, user_id: str, limit: int = 30) -> list[dict]:
         limit = max(1, min(limit, 100))
+        await self.mark_orphaned_runs()
         async with self.session_factory() as session:
             rows = list((await session.execute(select(PortfolioReview)
                 .where(PortfolioReview.user_id == user_id)

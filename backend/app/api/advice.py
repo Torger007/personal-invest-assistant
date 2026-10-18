@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 from app.utils.db import get_db
@@ -229,28 +229,11 @@ async def trigger_generate(db: AsyncSession = Depends(get_db), user: User = Depe
         }
 
 
-@router.get("/{fund_code}")
-async def get_fund_advice(fund_code: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    """获取单只基金的投资建议详情。通配路由须排在所有固定路径之后。"""
-    result = await db.execute(
-        select(AdviceRecord)
-        .where(AdviceRecord.fund_code == fund_code)
-        .where(AdviceRecord.user_id == user.id)
-        .order_by(AdviceRecord.date.desc())
-        .limit(1)
-    )
-    record = result.scalar_one_or_none()
-
-    if not record:
-        return {
-            "fund_code": fund_code,
-            "advice": None,
-            "message": "暂无建议记录，请先采集数据并生成建议",
-        }
-
+def _record_detail(record: AdviceRecord) -> dict:
     extra = _parse_advice_text(record)
     return {
-        "fund_code": fund_code,
+        "record_id": record.id,
+        "fund_code": record.fund_code,
         "date": str(record.date),
         "overall_signal": record.overall_signal,
         "confidence": float(record.confidence) if record.confidence else None,
@@ -263,3 +246,34 @@ async def get_fund_advice(fund_code: str, db: AsyncSession = Depends(get_db), us
         "details": extra.get("details"),
         "advice_text": extra.get("advice_text") or record.advice_text,
     }
+
+
+@router.get("/records/{record_id}")
+async def get_advice_record(record_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    """Open an exact historical evidence record within the current user's scope."""
+    record = await db.scalar(select(AdviceRecord).where(
+        AdviceRecord.id == record_id, AdviceRecord.user_id == user.id,
+    ))
+    if record is None:
+        raise HTTPException(status_code=404, detail="建议记录不存在")
+    return _record_detail(record)
+
+
+@router.get("/{fund_code}")
+async def get_fund_advice(fund_code: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    """获取单只基金的最新投资建议详情。通配路由须排在所有固定路径之后。"""
+    result = await db.execute(
+        select(AdviceRecord)
+        .where(AdviceRecord.fund_code == fund_code)
+        .where(AdviceRecord.user_id == user.id)
+        .order_by(AdviceRecord.date.desc())
+        .limit(1)
+    )
+    record = result.scalar_one_or_none()
+    if not record:
+        return {
+            "fund_code": fund_code,
+            "advice": None,
+            "message": "暂无建议记录，请先采集数据并生成建议",
+        }
+    return _record_detail(record)

@@ -17,7 +17,9 @@ class PlanningError(RuntimeError):
 PLANNER_SYSTEM_PROMPT = """你是投资分析系统的受约束规划器。
 你只能通过 submit_plan 工具提交一个数据获取计划，绝不能调用任何业务工具。
 只选择给定白名单中与问题直接相关的只读工具；不要生成投资动作、仓位或交易指令。
-计划必须最小化，步骤不超过 10 个；如数据不足，后续会由服务端决定是否重规划。"""
+计划必须最小化，步骤不超过 10 个；如数据不足，后续会由服务端决定是否重规划。
+若输入包含 required_intent，intent 字段必须逐字等于该值，不得填写中文任务描述。
+初次规划必须包含 required_tools 中的所有工具；补查只针对质量报告中可恢复的缺口。"""
 
 
 class ConstrainedPlanProvider:
@@ -47,6 +49,9 @@ class ConstrainedPlanProvider:
             "completed_steps": context.get("completed_steps") or [],
             "remaining_tool_calls": context.get("remaining_tool_calls"),
             "remaining_supplement_calls": context.get("remaining_supplement_calls"),
+            "required_intent": context.get("skill_id"),
+            "required_tools": context.get("required_tools") or [],
+            "plan_phase": context.get("plan_phase"),
         }
         response = await self.provider.chat(
             messages=[{"role": "user", "content": json.dumps(planner_input, ensure_ascii=False)}],

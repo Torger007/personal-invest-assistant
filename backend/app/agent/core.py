@@ -314,6 +314,7 @@ class AgentCore:
             self.execution_trace.update({
                 "skill_id": skill.id,
                 "skill_version": skill.version,
+                "review_id": (review_context or {}).get("review_id"),
                 "review_result": result.model_dump(mode="json"),
                 "selected_evidence": selected_evidence,
                 **snapshots,

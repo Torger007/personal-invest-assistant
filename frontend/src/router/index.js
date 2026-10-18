@@ -36,6 +36,16 @@ const routes = [
     path: '/agent',
     name: 'Agent',
     component: () => import('../views/AgentSettings.vue')
+  },
+  {
+    path: '/portfolio-reviews',
+    name: 'PortfolioReviewHistory',
+    component: () => import('../views/PortfolioReviewView.vue')
+  },
+  {
+    path: '/portfolio-reviews/:reviewId',
+    name: 'PortfolioReviewDetail',
+    component: () => import('../views/PortfolioReviewView.vue')
   }
 ]
 

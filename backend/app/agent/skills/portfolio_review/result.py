@@ -20,10 +20,36 @@ from app.services.decision_service import decision_service
 
 
 MAX_PROMPT_EVIDENCE = 250
-FORBIDDEN_ACTION = re.compile(
-    r"目标仓位|调仓至|调仓到|加仓至|减仓至|买入至|卖出至|"
-    r"(?:建议|应当|可以|立即|现在)[^。；]{0,8}(?:买入|卖出|加仓|减仓|调仓)"
+ACTION_PROPOSAL = re.compile(
+    r"(?:建议|应当|应该|可以|需要|考虑|立即|现在)[^。；，,]{0,12}"
+    r"(?:买入|卖出|加仓|减仓|调仓)"
 )
+NUMERIC_TARGET = re.compile(
+    r"(?:目标仓位|调仓至|调仓到|加仓至|减仓至|买入至|卖出至)"
+    r"\s*(?:为|到|至|:|：)?\s*[零一二三四五六七八九十\d]+(?:\.\d+)?\s*(?:%|％|成)?"
+)
+NEGATIONS = ("不", "不能", "无法", "不可", "未提供", "缺少", "未知", "没有", "暂缓")
+
+
+def _has_unruled_action(result: PortfolioReviewResult) -> bool:
+    """Reject affirmative advice while allowing statements about unavailable advice."""
+    texts = [
+        part for finding in result.findings
+        for part in (finding.title, finding.importance, finding.next_observation)
+    ] + result.limitations
+    for text in texts:
+        for clause in re.split(r"[。；;\n]", text):
+            if NUMERIC_TARGET.search(clause):
+                return True
+            for match in ACTION_PROPOSAL.finditer(clause):
+                context = clause[max(0, match.start() - 4):match.end()]
+                if not any(word in context for word in NEGATIONS):
+                    return True
+            for match in re.finditer("目标仓位", clause):
+                context = clause[max(0, match.start() - 8):match.end() + 8]
+                if not any(word in context for word in NEGATIONS):
+                    return True
+    return False
 
 
 def review_as_of(results: list[dict[str, Any]]) -> PortfolioReviewAsOf:
@@ -80,6 +106,9 @@ class PortfolioReviewResultBuilder:
             values={
                 "rule_version": decision_service.RULE_VERSION,
                 "quality_status": run.quality.status.value,
+                "missing_tools": run.quality.missing,
+                "stale_tools": run.quality.stale,
+                "failed_tools": run.quality.failed,
                 "preference_version": (preference or {}).get("version"),
             },
         ).model_dump(mode="json")
@@ -159,12 +188,7 @@ class PortfolioReviewResultBuilder:
                     raise ValueError("变化引用了非本次证据")
                 if not set(change.previous_evidence_ids) <= previous_ids:
                     raise ValueError("变化引用了非上次证据")
-            prose = " ".join(
-                f"{f.title} {f.importance} {f.relation_to_previous} {f.next_observation}"
-                for f in result.findings
-            ) + " " + " ".join(c.description for c in result.changes_since_previous)
-            prose += " " + " ".join(result.limitations)
-            if FORBIDDEN_ACTION.search(prose):
+            if _has_unruled_action(result):
                 raise ValueError("组合复盘包含未经规则裁决的操作或目标仓位")
             baseline_ids = [fact["evidence_id"] for fact in current if (
                 fact["source_ref"] == "derived:portfolio_composition"
@@ -184,13 +208,55 @@ class PortfolioReviewResultBuilder:
             return result, selected
         except Exception as error:
             reasons = list(run.quality.reasons)
-            reasons.append(f"结构化复盘未通过校验：{error}")
+            reasons.append(
+                "模型结论越过规则建议边界；以下仅展示可核对事实"
+                if "未经规则裁决" in str(error)
+                else f"结构化复盘未通过校验：{error}"
+            )
+            relation = ("首次复盘，暂无上次判断可比较" if not previous
+                        else "本次数据受限，无法核实与上次判断的变化")
+            findings = []
+            cited_ids = []
+            holdings_fact = next((fact for fact in current if
+                                  fact["source_ref"] == "derived:portfolio_composition"), None)
+            if holdings_fact is None:
+                holdings_fact = next((fact for fact in current if
+                                      fact["values"].get("position_id")), None)
+            if holdings_fact:
+                cited_ids.append(holdings_fact["evidence_id"])
+                findings.append({
+                    "title": "核对持仓估值日期", "category": "data_to_verify",
+                    "importance": "已读取持仓记录，但本次数据质量不足以确认最新估值变化。",
+                    "current_evidence_ids": [holdings_fact["evidence_id"]],
+                    "relation_to_previous": relation,
+                    "next_observation": "待基金净值与估值日期更新后重新核对。",
+                })
+            if run.quality.missing or run.quality.failed:
+                findings.append({
+                    "title": "规则与数据覆盖待补齐", "category": "data_to_verify",
+                    "importance": "本次部分必需数据缺失，无法据此给出基金操作判断。",
+                    "current_evidence_ids": [metadata["evidence_id"]],
+                    "relation_to_previous": relation,
+                    "next_observation": "先补齐数据或在投资建议页生成规则建议，再重新复盘。",
+                })
+            cited_ids.append(metadata["evidence_id"])
+            try:
+                selected = select_evidence_snapshot(
+                    run.results, (item for item in cited_ids if item != metadata["evidence_id"]),
+                )
+            except ValueError:
+                findings = [item for item in findings if
+                            item["current_evidence_ids"] == [metadata["evidence_id"]]]
+                cited_ids = [metadata["evidence_id"]]
+                selected = []
+            selected.append(metadata)
             return PortfolioReviewResult(
                 status="degraded", as_of=as_of,
                 comparison_status="compared" if previous else "first_review",
                 previous_review_id=previous.get("id") if previous else None,
-                limitations=reasons, evidence_ids=[],
-            ), []
+                findings=findings[:3], limitations=reasons,
+                evidence_ids=list(dict.fromkeys(cited_ids)),
+            ), selected
 
 
 def render_review_answer(result: PortfolioReviewResult) -> str:

@@ -127,6 +127,7 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
               </button>
             </el-tooltip>
+            <button class="review-history-link" type="button" @click="openReviewHistory">持仓复盘历史</button>
           </div>
           <div v-if="historyExpanded" class="history-list" v-loading="historyLoading">
             <div v-if="!historyLoading && !conversations.length" class="history-empty">暂无历史会话</div>
@@ -206,7 +207,11 @@
                 </div>
               </div>
               <div v-if="msg.content" class="message-content">{{ msg.content }}</div>
-              <button v-if="msg.analysisId" type="button" class="report-link" @click="viewReport(msg.analysisId)">查看报告</button>
+              <div v-if="msg.reviewId" class="review-message-status">
+                <span>{{ reviewStatusLabel(msg.reviewStatus) }}</span>
+                <button type="button" class="report-link" @click="openReview(msg.reviewId)">查看持仓复盘</button>
+              </div>
+              <button v-else-if="msg.analysisId" type="button" class="report-link" @click="viewReport(msg.analysisId)">查看报告</button>
             </div>
           </div>
 
@@ -361,6 +366,13 @@ const sendQuestion = async () => {
     await agentApi.chatStream(userQuestion, currentConversationId.value, event => {
       if (event.type === 'conversation') {
         currentConversationId.value = event.conversation_id
+      } else if (event.type === 'review_started') {
+        assistantMessage.reviewId = event.review_id
+        assistantMessage.reviewStatus = 'running'
+        assistantMessage.previousReviewId = event.previous_review_id
+      } else if (event.type === 'review_ready') {
+        assistantMessage.reviewId = event.review_id || assistantMessage.reviewId
+        assistantMessage.reviewStatus = event.review?.status || 'ready'
       } else if (event.type === 'tool_started') {
         assistantMessage.progress.push({ name: event.name, status: 'running' })
       } else if (event.type === 'tool_completed') {
@@ -375,12 +387,15 @@ const sendQuestion = async () => {
         assistantMessage.content += event.content
       } else if (event.type === 'complete') {
         assistantMessage.content = event.answer || assistantMessage.content
+        assistantMessage.reviewId = event.review_id || assistantMessage.reviewId
+        if (assistantMessage.reviewId) assistantMessage.reviewStatus = event.review?.status || 'ready'
         assistantMessage.analysisId = event.analysis_id || null
         assistantMessage.messageId = event.message_id || null
         const step = assistantMessage.progress.find(item => item.name === 'summarizing' && item.status === 'running')
         if (step) step.status = 'success'
       } else if (event.type === 'error') {
         assistantMessage.content = `抱歉，问答失败了：${event.message}`
+        if (assistantMessage.reviewId) assistantMessage.reviewStatus = 'failed'
       }
       scrollToBottom()
     })
@@ -400,6 +415,21 @@ const logout = async () => {
   } finally {
     router.replace('/login')
   }
+}
+
+const reviewStatusLabel = status => ({
+  running: '持仓复盘进行中', completed: '持仓复盘已完成', ready: '持仓复盘已完成', degraded: '持仓复盘已完成 · 数据受限',
+  failed: '持仓复盘失败', interrupted: '持仓复盘已中断'
+}[status] || '持仓复盘记录')
+
+const openReview = reviewId => {
+  drawerVisible.value = false
+  router.push({ name: 'PortfolioReviewDetail', params: { reviewId } })
+}
+
+const openReviewHistory = () => {
+  drawerVisible.value = false
+  router.push({ name: 'PortfolioReviewHistory' })
 }
 
 const toolLabel = (step) => {
@@ -463,6 +493,8 @@ const restoreConversation = async (conversationId) => {
       role: message.role,
       content: message.content,
       analysisId: message.analysis_id,
+      reviewId: message.review_id,
+      reviewStatus: message.review_status || (message.review_id ? 'completed' : null),
       messageId: message.id,
       progress: []
     }))
@@ -774,6 +806,17 @@ const handleDrawerClose = (done) => {
   align-items: center;
   justify-content: space-between;
 }
+
+.review-history-link {
+  border: 0;
+  background: transparent;
+  color: var(--color-accent);
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.review-history-link:hover { text-decoration: underline; }
 
 .history-toggle,
 .history-icon-button,
@@ -1089,6 +1132,16 @@ const handleDrawerClose = (done) => {
   color: var(--color-accent);
   cursor: pointer;
   font-size: 13px;
+}
+
+.review-message-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  margin-top: 10px;
+  color: var(--color-foreground-muted);
+  font-size: 12px;
 }
 
 .report-link:hover {

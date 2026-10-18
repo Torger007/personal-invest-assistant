@@ -3,8 +3,10 @@ Agent Service
 
 提供自主分析和问答交互两种模式。
 """
+import asyncio
 import time
 import logging
+from contextlib import suppress
 from datetime import datetime, timedelta
 from typing import Any, AsyncIterator
 from uuid import uuid4
@@ -172,11 +174,13 @@ class AgentService:
         core = AgentCore(user_id=user_id)
         start_time = time.time()
         review_id: str | None = None
+        heartbeat_task: asyncio.Task | None = None
         try:
             review_context = None
             pending_review_event = None
             if skill:
                 review_id, previous, preference = await review_memory.start_review(user_id, skill)
+                heartbeat_task = asyncio.create_task(self._heartbeat_review(user_id, review_id))
                 review_context = {
                     "review_id": review_id, "previous": previous, "preference": preference,
                 }
@@ -230,8 +234,22 @@ class AgentService:
                 await review_memory.stop_review(user_id, review_id, error=str(e))
             yield {"type": "error", "message": str(e)}
         finally:
+            if heartbeat_task:
+                heartbeat_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await heartbeat_task
             if review_id:
                 await review_memory.stop_review(user_id, review_id)
+
+    @staticmethod
+    async def _heartbeat_review(user_id: str, review_id: str) -> None:
+        while True:
+            await asyncio.sleep(10)
+            try:
+                if not await review_memory.heartbeat(user_id, review_id):
+                    return
+            except Exception:
+                logger.exception("[Agent] 复盘运行心跳失败")
 
     async def _prepare_conversation(
         self, question: str, user_id: str, conversation_id: str | None,
@@ -356,9 +374,26 @@ class AgentService:
                 .where(AgentMessage.conversation_id == conversation_id)
                 .order_by(AgentMessage.created_at.asc())
             )).scalars().all())
+            analysis_ids = [message.analysis_id for message in messages if message.analysis_id]
+            reviews_by_analysis = {}
+            if analysis_ids:
+                analyses = (await session.execute(select(AgentAnalysis).where(
+                    AgentAnalysis.id.in_(analysis_ids), AgentAnalysis.user_id == user_id,
+                ))).scalars().all()
+                for analysis in analyses:
+                    trace = analysis.tool_calls if isinstance(analysis.tool_calls, dict) else {}
+                    result = trace.get("review_result")
+                    reviews_by_analysis[analysis.id] = {
+                        "review_id": trace.get("review_id"),
+                        "review_status": result.get("status") if isinstance(result, dict) else None,
+                    }
             return {
                 **self._conversation_to_dict(conversation, len(messages)),
-                "messages": [self._message_to_dict(message) for message in messages],
+                "messages": [
+                    {**self._message_to_dict(message),
+                     **reviews_by_analysis.get(message.analysis_id, {})}
+                    for message in messages
+                ],
             }
 
     async def archive_conversation(self, user_id: str, conversation_id: str) -> None:

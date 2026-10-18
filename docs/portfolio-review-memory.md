@@ -8,7 +8,9 @@
 
 ## 独立复盘记录
 
-`POST /agent/portfolio-review` 先建立 `running` 记录；`review_started` 事件包含复盘 ID。`GET /agent/portfolio-reviews` 和 `GET /agent/portfolio-reviews/{id}` 从数据库读取状态、结构化报告、证据、快照及版本，所有查询以认证用户 ID 限定。报告持久化成功后才发出 `review_ready` 和 `complete`。失败与中断记录保留可见错误；单进程服务启动时将遗留的 `running` 标为 `interrupted`，用户可重新发起。
+前端以“问 AI”中的推荐提问“帮我分析当前持仓”为手动入口；等价的明确持仓分析问题进入同一复盘 Skill。历史页位于 `/portfolio-reviews`，对话完成后可直达对应报告。前端不额外设置发起按钮；下述直接发起 API 保留给 API 客户端使用。
+
+`POST /agent/portfolio-review` 先建立 `running` 记录；`review_started` 事件包含复盘 ID。`GET /agent/portfolio-reviews` 和 `GET /agent/portfolio-reviews/{id}` 从数据库读取状态、结构化报告、证据、快照及版本，所有查询以认证用户 ID 限定。报告持久化成功后才发出 `review_ready` 和 `complete`。失败与中断记录保留可见错误；运行期间持续更新心跳，服务启动及读取历史时仅将超过 45 秒没有心跳的运行标为 `interrupted`，用户可重新发起。
 
 记录保存运行与数据时间、持仓/市场/建议快照、上次复盘 ID、偏好版本、Skill / Prompt / 规则版本、结构化结果、证据依赖闭包、质量报告和错误信息。原有 `AgentAnalysis` 仅保留兼容性的运行轨迹。
 

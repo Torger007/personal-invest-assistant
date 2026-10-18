@@ -90,6 +90,7 @@ class PortfolioReview(Base):
     result_status = Column(String(20))
     contract_valid = Column(Boolean, nullable=False, default=False)
     started_at = Column(DateTime, default=func.now(), nullable=False)
+    heartbeat_at = Column(DateTime)
     completed_at = Column(DateTime)
     data_as_of = Column(JSON)
     holdings_snapshot = Column(JSON)

@@ -182,10 +182,20 @@ class QualityGate:
         ]
         if not reasons:
             return QualityReport(status=QualityStatus.READY)
+        # A second read can recover a transient no_data/error response once.
+        # Partial advice records and stale stored valuations cannot be repaired
+        # by repeating the same read-only tool in this Skill.
+        repairable = any(
+            not by_tool.get(tool) or (
+                len(by_tool[tool]) == 1
+                and by_tool[tool][0].get("status") in {"no_data", "error"}
+            )
+            for tool in [*missing, *failed]
+        )
         return QualityReport(
-            status=QualityStatus.REPLAN if allow_replan else QualityStatus.DEGRADED,
+            status=QualityStatus.REPLAN if allow_replan and repairable else QualityStatus.DEGRADED,
             missing=missing, stale=stale, failed=failed,
-            recoverable=allow_replan, reasons=reasons,
+            recoverable=allow_replan and repairable, reasons=reasons,
         )
 
     @staticmethod
