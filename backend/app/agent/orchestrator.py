@@ -127,7 +127,7 @@ class ConstrainedAgentOrchestrator:
                     "skill_id": skill.id,
                     "skill_instructions": skill.instructions,
                     "allowed_tools": sorted(available_tools),
-                    "required_tools": sorted(skill.required_tools) if attempt == 0 else [],
+                    "required_tools": sorted(set(context.get("review_required_tools") or skill.required_tools)) if attempt == 0 else [],
                     "plan_phase": "initial" if attempt == 0 else "repair",
                     "remaining_tool_calls": skill.max_tool_calls - len(all_results),
                     "remaining_supplement_calls": skill.max_supplement_calls - supplemental_calls,
@@ -138,7 +138,8 @@ class ConstrainedAgentOrchestrator:
                     validator.validate(
                         plan, allowed_tools=available_tools, expected_intent=skill.id,
                     )
-                    if attempt == 0 and not skill.required_tools <= {step.tool for step in plan.steps}:
+                    requested = set(context.get("review_required_tools") or skill.required_tools)
+                    if attempt == 0 and not requested <= {step.tool for step in plan.steps}:
                         raise PlanValidationError("初次计划缺少 Skill 必需工具")
                     if attempt and any(step.tool not in skill.supplement_tools for step in plan.steps):
                         raise PlanValidationError("补查计划包含非补查工具")
@@ -151,6 +152,10 @@ class ConstrainedAgentOrchestrator:
                         proposed = sum(step.tool == tool_name for step in plan.steps)
                         if policy and used_calls.get(tool_name, 0) + proposed > policy.max_calls:
                             raise PlanValidationError(f"整次运行的工具调用次数超限: {tool_name}")
+                elif "tool_scope" in context and any(
+                    step.tool not in set(context["tool_scope"]) for step in plan.steps
+                ):
+                    raise PlanValidationError("计划包含本次未开放的工具")
             except (PlanningError, PlanValidationError) as error:
                 if attempt == 0:
                     plan = DeterministicPlanAdapter.from_tool_plan(fallback_plan)

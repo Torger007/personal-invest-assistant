@@ -112,17 +112,6 @@ async def _legacy_daily_data_update():
                 else:
                     print(f"    [{board_type}] 无数据")
 
-            # 5. 生成投资建议
-            print("[调度器] 5/5 生成投资建议...")
-            try:
-                from app.services.advice_generator import generate_advice_for_portfolio
-                codes = []
-                for user in (await session.execute(select(User).where(User.is_active.is_(True)))).scalars():
-                    codes.extend(await generate_advice_for_portfolio(session, user.id))
-                print(f"  {len(codes)} 只基金建议已生成")
-            except Exception as e:
-                print(f"[调度器] 建议生成失败: {e}")
-
             print("[调度器] 每日数据更新完成")
 
         except Exception as e:
@@ -233,19 +222,10 @@ async def daily_data_update():
                 "warnings": warnings,
             }
 
-        async def update_advice():
-            from app.services.advice_generator import generate_advice_for_portfolio
-
-            generated = 0
-            for user in (await session.execute(select(User).where(User.is_active.is_(True)))).scalars():
-                generated += len(await generate_advice_for_portfolio(session, user.id))
-            return {"records": generated, "warnings": []}
-
         await run_stage("indices", update_indices)
         await run_stage("fund_flow", update_fund_flow)
         await run_stage("funds", update_funds)
         await run_stage("sectors", update_sectors)
-        await run_stage("advice", update_advice)
 
     stage_states = [stage["status"] for stage in result["stages"].values()]
     if "failed" in stage_states:

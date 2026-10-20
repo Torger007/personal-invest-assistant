@@ -11,9 +11,9 @@ from app.agent.trading_calendar import expected_session, sessions_between
 
 REQUIRED_TOOLS_BY_INTENT: dict[str, set[str]] = {
     "single_fund": {"get_fund_nav", "analyze_technical", "get_latest_advice"},
-    "portfolio": {"get_portfolio", "get_market_overview", "get_latest_advice", "compare_funds"},
-    "portfolio_analysis": {"get_portfolio", "get_market_overview", "get_latest_advice", "compare_funds"},
-    "portfolio_review": {"get_portfolio", "get_market_overview", "get_latest_advice", "compare_funds"},
+    "portfolio": {"get_portfolio"},
+    "portfolio_analysis": {"get_portfolio"},
+    "portfolio_review": {"get_portfolio"},
     "fund_comparison": {"compare_funds", "get_latest_advice"},
 }
 
@@ -98,104 +98,103 @@ class QualityGate:
         self, results: list[dict[str, Any]], *, today: date | None, allow_replan: bool,
         required_tools: set[str] | frozenset[str],
     ) -> QualityReport:
-        # Test dates use a post-publication clock; production uses Shanghai time.
         at = (datetime.combine(today, time(23), tzinfo=ZoneInfo("Asia/Shanghai"))
               if today else datetime.now(ZoneInfo("Asia/Shanghai")))
         nav_expected = expected_session(at, publication_hour=22)
         market_expected = expected_session(at, publication_hour=16)
-        if nav_expected is None or market_expected is None:
-            return QualityReport(
-                status=QualityStatus.DEGRADED,
-                reasons=["交易日历不可用，无法判断净值和市场数据是否及时"],
-            )
-
         by_tool: dict[str, list[dict[str, Any]]] = {}
         for item in results:
             by_tool.setdefault(item["tool_name"], []).append(item["result"])
-        portfolio_results = [result for result in by_tool.get("get_portfolio", [])
-                             if result.get("status") == "success"]
-        portfolio_codes = {
-            fund.get("code")
-            for fund in ((portfolio_results[-1].get("data") or {}).get("funds") or [])
-            if fund.get("code")
-        } if portfolio_results else set()
-        missing: list[str] = []
-        stale: list[str] = []
-        failed: list[str] = []
-        for tool in sorted(required_tools):
-            candidates = by_tool.get(tool, [])
-            if not candidates:
-                missing.append(tool)
-                continue
-            # A failed retry must not erase an earlier usable observation.
-            usable = [result for result in candidates if result.get("status") == "success"]
-            if not usable:
-                if any(result.get("status") == "error" for result in candidates):
-                    failed.append(tool)
-                else:
-                    missing.append(tool)
-                continue
-            result = usable[-1]
-            if tool == "get_portfolio":
-                funds = (result.get("data") or {}).get("funds") or []
-                valuations = [row for fund in funds for row in fund.get("valuations", [])]
-                if not funds or not valuations:
-                    missing.append(tool)
-                elif any(row.get("status") != "nav" or _parse_date(row.get("as_of")) is None
-                         or _parse_date(row["as_of"]) != nav_expected for row in valuations):
-                    stale.append(tool)
-            elif tool == "get_market_overview":
-                indices = (result.get("data") or {}).get("indices") or []
-                if len(indices) < 3 or any(index.get("value") is None for index in indices):
-                    missing.append(tool)
-                elif any(_parse_date(index.get("date")) is None
-                         or _parse_date(index["date"]) != market_expected for index in indices):
-                    stale.append(tool)
-            elif tool in {"get_latest_advice", "compare_funds"}:
-                data = result.get("data") or {}
-                if data.get("missing_fund_codes"):
-                    missing.append(tool)
-                elif tool == "get_latest_advice" and not data.get("funds"):
-                    missing.append(tool)
-                elif tool == "compare_funds" and not data.get("funds"):
-                    missing.append(tool)
-                elif portfolio_codes and not portfolio_codes <= {
-                    fund.get("fund_code") for fund in data["funds"]
-                }:
-                    missing.append(tool)
-                else:
-                    if tool == "get_latest_advice":
-                        dates = [((fund.get("latest_advice") or {}).get("date"))
-                                 for fund in data["funds"]]
-                    else:
-                        dates = [fund.get("advice_date") for fund in data["funds"]]
-                    ages = [sessions_between(_parse_date(value), nav_expected)
-                            if _parse_date(value) and _parse_date(value) <= nav_expected else None
-                            for value in dates]
-                    if any(age is None or age > 1 for age in ages):
-                        stale.append(tool)
 
-        reasons = [
-            *[f"缺少必需数据：{name}" for name in missing],
-            *[f"数据已过期或使用校准估值：{name}" for name in stale],
-            *[f"工具执行失败：{name}" for name in failed],
-        ]
-        if not reasons:
-            return QualityReport(status=QualityStatus.READY)
-        # A second read can recover a transient no_data/error response once.
-        # Partial advice records and stale stored valuations cannot be repaired
-        # by repeating the same read-only tool in this Skill.
-        repairable = any(
-            not by_tool.get(tool) or (
-                len(by_tool[tool]) == 1
-                and by_tool[tool][0].get("status") in {"no_data", "error"}
-            )
-            for tool in [*missing, *failed]
-        )
+        missing: list[str] = []
+        failed: list[str] = []
+        stale: list[str] = []
+        reasons: list[str] = []
+        portfolio = next((item for item in reversed(by_tool.get("get_portfolio", []))
+                          if item.get("status") == "success"), None)
+        if portfolio is None:
+            (failed if any(item.get("status") == "error" for item in by_tool.get("get_portfolio", []))
+             else missing).append("get_portfolio")
+        else:
+            funds = (portfolio.get("data") or {}).get("funds") or []
+            valuations = [row for fund in funds for row in fund.get("valuations", [])]
+            if not funds or not valuations or any(not row.get("as_of") for row in valuations):
+                missing.append("get_portfolio")
+            elif nav_expected:
+                outdated = review_outdated_valuations(funds, nav_expected)
+                if outdated:
+                    reasons.append("部分持仓估值日期较早，请逐只核对：" + "、".join(outdated.values()))
+
+        for tool in sorted(set(by_tool) - {"get_portfolio"}):
+            if tool == "get_latest_advice":
+                missing_codes: list[str] = []
+                advice_dates: list[str] = []
+                incomplete = False
+                for item in by_tool[tool]:
+                    data = item.get("data") or {}
+                    code = str(data.get("fund_code") or "")
+                    rows = data.get("funds") or data.get("advice") or []
+                    if item.get("status") == "partial" and not data.get("missing_fund_codes"):
+                        incomplete = True
+                    if item.get("status") not in {"success", "partial"} or not rows:
+                        missing_codes.extend(data.get("missing_fund_codes") or ([code] if code else []))
+                        continue
+                    missing_codes.extend(data.get("missing_fund_codes") or [])
+                    for row in rows:
+                        record = row.get("latest_advice") if "latest_advice" in row else row
+                        if record:
+                            advice_dates.append(str(record.get("date") or ""))
+                        elif row.get("fund_code"):
+                            missing_codes.append(str(row["fund_code"]))
+                if missing_codes:
+                    reasons.append("指定基金暂无规则建议：" + "、".join(dict.fromkeys(missing_codes)))
+                if incomplete:
+                    reasons.append("规则建议结果不完整，本次不引用建议记录")
+                if not advice_dates or incomplete:
+                    missing.append(tool)
+                elif nav_expected and any(
+                    not _parse_date(value) or sessions_between(_parse_date(value), nav_expected) > 1
+                    for value in advice_dates
+                ):
+                    stale.append(tool)
+                    reasons.append("部分规则建议日期较早，本次不引用建议记录")
+                continue
+            candidate = next((item for item in reversed(by_tool[tool])
+                              if item.get("status") == "success"), None)
+            if candidate is None:
+                missing.append(tool)
+                reasons.append(f"可选数据暂不可用：{tool}")
+                continue
+            data = candidate.get("data") or {}
+            if tool == "get_market_overview":
+                indices = data.get("indices") or []
+                if not indices or any(index.get("value") is None for index in indices):
+                    missing.append(tool)
+                elif market_expected and any((_parse_date(index.get("date")) or date.min) < market_expected
+                                             for index in indices):
+                    stale.append(tool)
+                if tool in [*missing, *stale]:
+                    reasons.append("市场背景数据不足，仅依据持仓估值复盘；指数日期：" + "、".join(
+                        f"{index.get('code')}: {index.get('date') or '无日期'}" for index in indices))
+            elif tool == "compare_funds":
+                rows = data.get("funds") or []
+                dates = [row.get("advice_date") for row in rows]
+                if not rows or data.get("missing_fund_codes") or any(not value for value in dates):
+                    missing.append(tool)
+                    reasons.append(f"规则建议未覆盖本次指定基金：{tool}")
+                elif nav_expected and any(sessions_between(_parse_date(value), nav_expected) > 1
+                                          for value in dates if _parse_date(value)):
+                    stale.append(tool)
+                    reasons.append(f"规则建议日期较早：{tool}")
+
+        reasons.extend(f"缺少持仓估值：{tool}" for tool in missing if tool == "get_portfolio")
+        reasons.extend(f"持仓工具执行失败：{tool}" for tool in failed)
+        critical = "get_portfolio" in [*missing, *failed]
+        repairable = critical and allow_replan and len(by_tool.get("get_portfolio", [])) < 2
         return QualityReport(
-            status=QualityStatus.REPLAN if allow_replan and repairable else QualityStatus.DEGRADED,
+            status=QualityStatus.REPLAN if repairable else QualityStatus.DEGRADED if critical else QualityStatus.READY,
             missing=missing, stale=stale, failed=failed,
-            recoverable=allow_replan and repairable, reasons=reasons,
+            recoverable=repairable, reasons=reasons,
         )
 
     @staticmethod
@@ -230,6 +229,28 @@ def _parse_date(value: Any) -> date | None:
             return date.fromisoformat(str(value)[:10])
         except ValueError:
             return None
+
+
+def _review_stale_label(tool_name: str) -> str:
+    return {
+        "get_portfolio": "持仓净值日期不足或使用校准估值",
+        "get_market_overview": "市场数据日期不足",
+    }.get(tool_name, "规则建议日期不足")
+
+
+def review_outdated_valuations(funds: list[dict], nav_expected: date) -> dict[str, str]:
+    """Identify holdings whose stored NAV cannot support the current review."""
+    outdated: dict[str, str] = {}
+    for fund in funds:
+        code = str(fund.get("code") or "?")
+        allowed_lag = 1 if "QDII" in str(fund.get("name") or "").upper() else 0
+        for row in fund.get("valuations", []):
+            as_of = _parse_date(row.get("as_of"))
+            lag = sessions_between(as_of, nav_expected) if as_of else None
+            if row.get("status") != "nav" or as_of is None or lag is None or lag > allowed_lag:
+                outdated[code] = (f"{code}: {row.get('as_of') or '无日期'}"
+                                  + ("（校准估值）" if row.get("status") != "nav" else ""))
+    return outdated
 
 
 def _business_days_between(start: date, end: date) -> int:

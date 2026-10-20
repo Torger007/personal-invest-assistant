@@ -8,8 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.agent.contracts import EvidenceSnapshot, ToolResultStatus
 
 
-MAX_PORTFOLIO_FUNDS = 50
-MAX_PORTFOLIO_POSITIONS = 100
+MAX_PORTFOLIO_FUNDS = 200
+MAX_PORTFOLIO_POSITIONS = 500
 MAX_ADVICE_ITEMS = 20
 MAX_COMPARISONS = 20
 
@@ -56,7 +56,7 @@ class PortfolioFund(OutputRow):
     market_value: float
     platform_count: int
     valuation_status: str
-    valuations: list[ValuationRow] = Field(max_length=100)
+    valuations: list[ValuationRow] = Field(max_length=MAX_PORTFOLIO_POSITIONS)
 
 
 class PortfolioOutput(OutputRow):

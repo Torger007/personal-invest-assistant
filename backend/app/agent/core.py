@@ -250,10 +250,13 @@ class AgentCore:
         async def emit(event: dict[str, Any]) -> None:
             await queued_events.put(event)
 
+        tool_scope = set(planning_context["tool_scope"]) if "tool_scope" in planning_context else None
         allowed_tools = [
             name for name in self.tools.get_tool_names()
             if (policy := get_tool_policy(name)) and policy.llm_plannable
             and (skill is None or name in skill.allowed_tools)
+            and (skill is None or name in planning_context.get("review_allowed_tools", skill.allowed_tools))
+            and (tool_scope is None or name in tool_scope)
         ]
         runner = ConstrainedAgentOrchestrator(
             ConstrainedPlanProvider(provider=self.llm),

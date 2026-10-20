@@ -95,31 +95,47 @@ def test_portfolio_output_cap_marks_partial_without_silent_loss():
         {"code": f"{index:06d}", "name": "基金", "weight": 1 / 51,
          "market_value": 100, "platform_count": 1, "valuation_status": "nav",
          "valuations": [_valuation(str(index), 100, "2026-10-16", "unknown", index, "nav", "shares_times_nav")]}
-        for index in range(51)
+        for index in range(201)
     ]
     result = ToolRegistry._to_envelope("get_portfolio", {
-        "status": "success", "data": {"funds": funds, "total_weight": 1.0, "count": 51}, "count": 51,
+        "status": "success", "data": {"funds": funds, "total_weight": 1.0, "count": 201}, "count": 201,
     }, READ_AT)
     assert result["status"] == "partial"
-    assert len(result["data"]["funds"]) == 50
-    assert result["count"] == 51
+    assert len(result["data"]["funds"]) == 200
+    assert result["count"] == 201
     assert result["completeness"] < 1
     assert "output_truncated" in result["quality_flags"]
+
+
+def test_portfolio_with_hundred_funds_keeps_all_evidence():
+    funds = [
+        {"code": f"{index:06d}", "name": "基金", "weight": 1 / 120,
+         "market_value": 100, "platform_count": 1, "valuation_status": "nav",
+         "valuations": [_valuation(str(index), 100, "2026-10-16", "unknown", index,
+                                    "nav", "shares_times_nav")]}
+        for index in range(120)
+    ]
+    result = ToolRegistry._to_envelope("get_portfolio", {
+        "status": "success", "data": {"funds": funds, "total_weight": 1.0, "count": 120}, "count": 120,
+    }, READ_AT)
+    assert result["status"] == "success"
+    assert len(result["data"]["funds"]) == 120
+    assert len([item for item in result["evidence"] if ":position:" in item["evidence_id"]]) == 120
 
 
 def test_position_cap_does_not_create_unverifiable_weight_fact():
     valuations = [
         _valuation(f"p{index}", 100, "2026-10-16", "unknown", index, "nav", "shares_times_nav")
-        for index in range(101)
+        for index in range(501)
     ]
     data = {"funds": [{
         "code": "008163", "name": "基金一", "weight": 1.0,
-        "market_value": 10100, "platform_count": 101,
+        "market_value": 50100, "platform_count": 501,
         "valuation_status": "nav", "valuations": valuations,
     }], "total_weight": 1.0, "count": 1}
     result = ToolRegistry._to_envelope("get_portfolio", {"status": "success", "data": data, "count": 1}, READ_AT)
     assert result["status"] == "partial"
-    assert len(result["data"]["funds"][0]["valuations"]) == 100
+    assert len(result["data"]["funds"][0]["valuations"]) == 500
     assert not any(item["evidence_id"].endswith(":fund:008163") for item in result["evidence"])
 
 

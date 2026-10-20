@@ -10,8 +10,9 @@
 """
 import json
 import logging
-from datetime import date, timedelta
+from datetime import datetime, timedelta
 from typing import List, Optional
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from sqlalchemy import select
@@ -162,7 +163,7 @@ async def save_advice_record(
 
     使用 upsert：同一 fund_code + date 已存在则更新。
     """
-    today = date.today()
+    today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
 
     # 查询是否已有当日记录
     stmt = select(AdviceRecord).where(

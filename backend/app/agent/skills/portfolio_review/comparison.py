@@ -107,6 +107,7 @@ def build_verified_changes(
     current: dict[str, dict], previous: dict[str, Any],
     current_evidence: list[dict], previous_evidence: list[dict],
     *, current_rule_version: str, current_quality: str, current_as_of: str,
+    include_market: bool = True, include_advice: bool = True,
 ) -> tuple[list[PortfolioReviewChange], list[str]]:
     """Descriptions and evidence IDs are derived from stored values, not model prose."""
     old_holdings = previous.get("holdings_snapshot") or {}
@@ -153,8 +154,8 @@ def build_verified_changes(
         append("holding", "；".join(details), [current_composition], [old_composition])
 
     valuation_changed = _valuation(now_holdings) != _valuation(old_holdings)
-    market_changed = now_market != old_market
-    advice_dates_changed = _advice_dates(now_advice) != _advice_dates(old_advice)
+    market_changed = include_market and now_market != old_market
+    advice_dates_changed = include_advice and _advice_dates(now_advice) != _advice_dates(old_advice)
     if valuation_changed:
         append("data", "持仓净值或估值日期与上次记录不同",
                [current_composition], [old_composition])
@@ -169,19 +170,18 @@ def build_verified_changes(
                    [_fact_for_code(current_evidence, code, source="rule_engine")],
                    [_fact_for_code(previous_evidence, code, source="rule_engine")])
 
-    rule_changed = (
-        _advice_rule(now_advice) != _advice_rule(old_advice)
-        or current_rule_version != previous.get("rule_version")
-        or current_quality != (previous.get("quality_report") or {}).get("status")
-    )
-    if _advice_rule(now_advice) != _advice_rule(old_advice):
+    advice_rule_changed = include_advice and _advice_rule(now_advice) != _advice_rule(old_advice)
+    quality_changed = current_quality != (previous.get("quality_report") or {}).get("status")
+    rule_version_changed = include_advice and current_rule_version != previous.get("rule_version")
+    rule_changed = advice_rule_changed or rule_version_changed or quality_changed
+    if advice_rule_changed:
         for code in _changed_codes(_advice_rule(now_advice), _advice_rule(old_advice), "fund_code"):
             append("rule", f"基金 {code} 的规则建议结论或目标值与上次记录不同",
                    [_fact_for_code(current_evidence, code, source="rule_engine")],
                    [_fact_for_code(previous_evidence, code, source="rule_engine")])
-    if (current_rule_version != previous.get("rule_version")
-            or current_quality != (previous.get("quality_report") or {}).get("status")):
-        append("rule", "规则版本或数据质量状态与上次记录不同",
+    if rule_version_changed or quality_changed:
+        append("rule", "规则版本或数据质量状态与上次记录不同" if rule_version_changed
+               else "数据质量状态与上次记录不同",
                [_fact_id(current_evidence, source="agent_runtime")],
                [_fact_id(previous_evidence, source="agent_runtime")])
 
@@ -190,16 +190,16 @@ def build_verified_changes(
                             or rule_changed):
         current_ids = [current_composition]
         previous_ids = [old_composition]
-        for index in now_market.get("indices", []):
+        for index in now_market.get("indices", []) if include_market else []:
             code = index.get("code")
             current_ids.append(_fact_for_code(current_evidence, code, source_ref_prefix="index_daily:"))
             previous_ids.append(_fact_for_code(previous_evidence, code, source_ref_prefix="index_daily:"))
-        for fund in now_advice.get("funds", []):
+        for fund in now_advice.get("funds", []) if include_advice else []:
             code = fund.get("fund_code")
             current_ids.append(_fact_for_code(current_evidence, code, source="rule_engine"))
             previous_ids.append(_fact_for_code(previous_evidence, code, source="rule_engine"))
         current_ids.append(_fact_id(current_evidence, source="agent_runtime"))
         previous_ids.append(_fact_id(previous_evidence, source="agent_runtime"))
-        append("continuity", "持仓、净值与市场数据、规则建议未出现可确认的新变化",
+        append("continuity", "本次核对的持仓与估值未出现可确认的新变化",
                current_ids, previous_ids)
     return changes, unverifiable

@@ -45,7 +45,7 @@
           </div>
 
           <template v-if="review.status === 'running'">
-            <el-alert title="复盘正在运行" description="正在读取持仓和市场数据，完成后本页会自动更新。刷新页面也能继续查看状态。" type="info" :closable="false" show-icon />
+            <el-alert title="复盘正在运行" description="正在核对持仓估值；按提问需要读取其他数据。完成后本页会自动更新。" type="info" :closable="false" show-icon />
           </template>
           <template v-else-if="review.status !== 'completed'">
             <el-alert :title="review.status === 'interrupted' ? '本次复盘已中断' : '本次复盘未完成'" :description="review.error || '可在问 AI 中重新发起。'" type="warning" :closable="false" show-icon />
@@ -57,8 +57,8 @@
                 <div><span>运行时间</span><strong>{{ formatTime(review.result.as_of?.run_at) }}</strong></div>
                 <div><span>持仓估值</span><strong>{{ rangeLabel(review.result.as_of?.holdings) }}</strong></div>
                 <div><span>基金净值</span><strong>{{ rangeLabel(review.result.as_of?.fund_nav) }}</strong></div>
-                <div><span>市场数据</span><strong>{{ review.result.as_of?.market || '未知' }}</strong></div>
-                <div><span>规则建议</span><strong>{{ rangeLabel(review.result.as_of?.advice) }}</strong></div>
+                <div><span>市场数据</span><strong>{{ review.result.as_of?.market || '未读取（按需）' }}</strong></div>
+                <div><span>规则建议</span><strong>{{ Object.keys(review.result.as_of?.advice || {}).length ? rangeLabel(review.result.as_of?.advice) : '未读取（按需）' }}</strong></div>
               </div>
             </section>
 
@@ -103,7 +103,7 @@
             </section>
 
             <section v-if="review.result.limitations?.length" class="report-section">
-              <h4>数据限制</h4>
+              <h4>{{ review.result.status === 'ready' ? '数据提示' : '数据限制' }}</h4>
               <ul class="limitations"><li v-for="(item, index) in review.result.limitations" :key="index">{{ item }}</li></ul>
               <div class="limitation-links">
                 <router-link v-if="review.quality_report?.missing?.includes('get_latest_advice')" to="/advice">查看投资建议与生成入口</router-link>
@@ -113,7 +113,7 @@
 
             <section class="report-section">
               <h4>证据记录</h4>
-              <p class="muted">展开证据查看来源、实际日期与取数时间；可从持仓或规则建议记录跳转到对应页面。</p>
+              <p class="muted">展开证据查看来源、实际日期与取数时间；持仓估值明细沿用持仓页的记录。</p>
               <div v-for="fact in citedEvidence" :id="evidenceDomId(fact.evidence_id)" :key="fact.evidence_id" class="evidence-card">
                 <div class="evidence-heading">
                   <strong>{{ evidenceLabel(fact) }}</strong>
@@ -164,7 +164,7 @@ const changes = computed(() => review.value?.result?.changes_since_previous || [
 const evidenceById = computed(() => Object.fromEntries((review.value?.evidence_snapshot || []).map(fact => [fact.evidence_id, fact])))
 const citedEvidence = computed(() => {
   const ids = new Set(review.value?.result?.evidence_ids || [])
-  return (review.value?.evidence_snapshot || []).filter(fact => ids.has(fact.evidence_id))
+  return (review.value?.evidence_snapshot || []).filter(fact => ids.has(fact.evidence_id) || fact.values?.position_id)
 })
 
 function formatTime(value) {

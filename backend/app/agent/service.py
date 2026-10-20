@@ -19,6 +19,7 @@ from app.agent.planner import AgentPlanner
 from app.agent.prompt_loader import get_agent_system_prompt, render_agent_prompt
 from app.agent.skills.registry import SkillDefinition, get_skill, match_skill
 from app.agent.review_memory import review_memory
+from app.agent.skills.portfolio_review.policy import select_focus_codes
 from app.config import settings
 from app.services.portfolio_service import get_user_portfolio
 from app.models.agent import AgentAnalysis, AgentConversation, AgentMessage
@@ -38,7 +39,7 @@ class AgentService:
         self.planner = AgentPlanner()
 
     async def analyze_portfolio(self, user_id: str) -> str:
-        """自主分析模式：分析用户持仓基金，生成投资建议。
+        """自主分析模式：分析用户持仓估值与组合结构。
 
         Returns:
             str: 分析报告
@@ -80,7 +81,8 @@ class AgentService:
         }
 
         async with AsyncSessionLocal() as session:
-            portfolio_codes = [fund["code"] for fund in await get_user_portfolio(session, user_id)]
+            portfolio_rows = await get_user_portfolio(session, user_id)
+            portfolio_codes = [fund["code"] for fund in portfolio_rows]
         prompt = render_agent_prompt(
             "interactive_question",
             portfolio_codes=", ".join(portfolio_codes),
@@ -90,7 +92,8 @@ class AgentService:
             ),
         )
         skill = get_skill(skill_id) if (skill_id := match_skill(question)) else None
-        plan = self.planner.plan_portfolio_review() if skill else self.planner.plan_question(question, active_context)
+        plan = (self.planner.plan_portfolio_review(question, select_focus_codes(portfolio_rows))
+                if skill else self.planner.plan_question(question, active_context))
         async for event in self._stream_and_save(
             analysis_type="interactive",
             prompt=prompt,
@@ -101,6 +104,10 @@ class AgentService:
             planning_context={
                 "active_context": active_context,
                 "portfolio_fund_codes": portfolio_codes,
+                **({"review_allowed_tools": [step.tool_name for step in plan.steps]} if skill else {}),
+                **({"review_required_tools": [step.tool_name for step in plan.steps]} if skill else {}),
+                **({"tool_scope": [step.tool_name for step in plan.steps]}
+                   if not skill and plan.intent == "portfolio" else {}),
             },
             skill=skill,
         ):
@@ -139,6 +146,7 @@ class AgentService:
             planning_question="分析当前持仓基金组合",
             planning_context={
                 "portfolio_fund_codes": [fund["code"] for fund in portfolio],
+                "tool_scope": ["get_portfolio"],
             },
         ):
             yield event
@@ -155,7 +163,9 @@ class AgentService:
             trace_question="持仓复盘",
             user_id=user_id,
             planning_question="复盘当前持仓",
-            planning_context={"portfolio_fund_codes": [fund["code"] for fund in portfolio]},
+            planning_context={"portfolio_fund_codes": [fund["code"] for fund in portfolio],
+                              "review_allowed_tools": ["get_portfolio"],
+                              "review_required_tools": ["get_portfolio"]},
             skill=skill,
         ):
             yield event

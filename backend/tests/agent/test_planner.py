@@ -22,6 +22,8 @@ def test_question_intents_choose_expected_plans():
     assert planner.plan_question("市场行情怎么样？").intent == "market"
     assert planner.plan_question("新能源板块趋势如何？").intent == "sector"
     assert planner.plan_question("上次是怎么判断的？").intent == "history"
+    assert [step.tool_name for step in planner.plan_question("我的持仓怎么配置？").steps] == ["get_portfolio"]
+    assert [step.tool_name for step in planner.plan_portfolio_analysis().steps] == ["get_portfolio"]
 
 
 def test_duplicate_fund_codes_are_deduplicated_for_comparison():

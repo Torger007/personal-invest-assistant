@@ -60,14 +60,9 @@ class AgentPlanner:
                 fund_codes,
             )
         if self._contains(normalized, self._PORTFOLIO_KEYWORDS):
-            steps = [
-                PlanStep("get_portfolio"),
-                PlanStep("get_market_overview"),
-                PlanStep("get_latest_advice"),
-                PlanStep("compare_funds"),
-            ]
-            if self._contains(normalized, self._REFRESH_ADVICE_KEYWORDS):
-                steps.extend([PlanStep("generate_advice"), PlanStep("get_latest_advice")])
+            steps = [PlanStep("get_portfolio")]
+            if self._contains(normalized, self._MARKET_KEYWORDS):
+                steps.append(PlanStep("get_market_overview"))
             return ToolPlan("portfolio", steps)
         if self._contains(normalized, self._MARKET_KEYWORDS):
             return ToolPlan("market", [PlanStep("get_market_overview")])
@@ -77,28 +72,21 @@ class AgentPlanner:
 
     def plan_portfolio_analysis(self) -> ToolPlan:
         """Return the bounded plan used by the autonomous portfolio endpoint."""
-        return ToolPlan(
-            "portfolio_analysis",
-            [
-                PlanStep("get_portfolio"),
-                PlanStep("get_market_overview"),
-                PlanStep("get_latest_advice"),
-                PlanStep("compare_funds"),
-                PlanStep("get_sector_trend"),
-            ],
-        )
+        return ToolPlan("portfolio_analysis", [PlanStep("get_portfolio")])
 
-    def plan_portfolio_review(self) -> ToolPlan:
-        """Safe fallback for the registered portfolio review skill."""
-        return ToolPlan(
-            "portfolio_review",
-            [
-                PlanStep("get_portfolio"),
-                PlanStep("get_market_overview"),
-                PlanStep("get_latest_advice"),
-                PlanStep("compare_funds"),
-            ],
-        )
+    def plan_portfolio_review(self, question: str = "", focus_codes: list[str] | None = None) -> ToolPlan:
+        """Read holdings first; add context only when the question asks for it."""
+        steps = [PlanStep("get_portfolio")]
+        codes = self._extract_fund_codes(question)
+        overseas_only = self._contains(question.lower(), ("qdii", "纳斯达克", "美股", "标普"))
+        if self._contains(question, self._MARKET_KEYWORDS) and not overseas_only:
+            steps.append(PlanStep("get_market_overview"))
+        if self._contains(question, ("操作", "建议", "买", "卖", "加仓", "减仓")):
+            for code in (codes or focus_codes or [])[:3]:
+                steps.append(PlanStep("get_latest_advice", {"fund_code": code}))
+        if len(codes) >= 2 and self._contains(question, self._COMPARE_KEYWORDS):
+            steps.append(PlanStep("compare_funds", {"fund_codes": codes[:20]}))
+        return ToolPlan("portfolio_review", steps, codes)
 
     def _single_fund_plan(self, fund_code: str, question: str) -> ToolPlan:
         steps = [

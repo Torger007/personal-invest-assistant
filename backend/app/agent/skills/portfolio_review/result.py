@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -16,6 +17,7 @@ from app.agent.evidence import (
 from app.agent.orchestrator import ConstrainedRun
 from app.agent.skills.registry import SkillDefinition
 from app.agent.skills.portfolio_review.comparison import build_verified_changes, extract_snapshots
+from app.agent.skills.portfolio_review.policy import category_policy, fund_category
 from app.services.decision_service import decision_service
 
 
@@ -65,6 +67,9 @@ def review_as_of(results: list[dict[str, Any]]) -> PortfolioReviewAsOf:
                 for value in fund.get("valuations", []):
                     if value.get("position_id") and value.get("as_of"):
                         holdings[str(value["position_id"])] = str(value["as_of"])
+                    if fund.get("code") and value.get("status") == "nav" and value.get("as_of"):
+                        code = str(fund["code"])
+                        nav[code] = max(nav.get(code, ""), str(value["as_of"]))
         elif tool == "get_fund_nav":
             for value in data if isinstance(data, list) else []:
                 if value.get("fund_code") and value.get("date"):
@@ -96,7 +101,12 @@ class PortfolioReviewResultBuilder:
         review_id: str | None = None,
     ) -> tuple[PortfolioReviewResult, list[dict[str, Any]]]:
         as_of = review_as_of(run.results)
-        current = collect_evidence_candidates(run.results)
+        unusable_tools = set(run.quality.stale) | set(run.quality.failed) | (
+            set(run.quality.missing) - {"get_portfolio"}
+        )
+        current = collect_evidence_candidates([
+            item for item in run.results if item["tool_name"] not in unusable_tools
+        ])
         metadata = EvidenceSnapshot(
             evidence_id=f"ev_review_meta:{review_id or uuid4().hex}",
             source="agent_runtime", source_ref=f"portfolio_review_run:{review_id or 'unpersisted'}",
@@ -116,7 +126,11 @@ class PortfolioReviewResultBuilder:
         previous_facts = (previous or {}).get("evidence") or []
         previous_ids = {fact["evidence_id"] for fact in previous_facts}
         current_ids = {fact["evidence_id"] for fact in current}
-        prompt_facts = current[:MAX_PROMPT_EVIDENCE - 1] + [metadata]
+        composition = [fact for fact in current if fact["source_ref"] == "derived:portfolio_composition"]
+        weights = [fact for fact in current if fact["source_ref"] == "derived:portfolio_weight"]
+        prompt_facts = (composition + weights + [fact for fact in current if fact not in composition + weights])[
+            :MAX_PROMPT_EVIDENCE - 1
+        ] + [metadata]
         snapshots = extract_snapshots(run.results)
         verified_changes = []
         comparison_gaps: list[str] = []
@@ -126,12 +140,20 @@ class PortfolioReviewResultBuilder:
                 current_rule_version=decision_service.RULE_VERSION,
                 current_quality=run.quality.status.value,
                 current_as_of=as_of.run_at.isoformat(),
+                include_market=any(item["tool_name"] == "get_market_overview" for item in run.results)
+                and "get_market_overview" not in unusable_tools,
+                include_advice=any(item["tool_name"] == "get_latest_advice" for item in run.results)
+                and "get_latest_advice" not in unusable_tools,
             )
         tool = {
             "name": "submit_portfolio_review",
             "description": "提交结构化持仓复盘。只能引用给定证据 ID。",
             "input_schema": PortfolioReviewResult.model_json_schema(),
         }
+        portfolio_data = next((item["result"].get("data") or {} for item in reversed(run.results)
+                               if item["tool_name"] == "get_portfolio"
+                               and item["result"].get("status") == "success"), {})
+        portfolio_funds = portfolio_data.get("funds") or []
         payload = {
             "quality": run.quality.model_dump(mode="json"),
             "as_of": as_of.model_dump(mode="json"),
@@ -139,39 +161,51 @@ class PortfolioReviewResultBuilder:
             "previous": {**previous, "evidence": previous_facts[:MAX_PROMPT_EVIDENCE]} if previous else None,
             "verified_changes": [change.model_dump(mode="json") for change in verified_changes],
             "confirmed_preference": preference,
+            "category_review_policy": category_policy(portfolio_funds),
+            "fund_categories": {str(fund["code"]): fund_category(str(fund.get("name") or ""))
+                                for fund in portfolio_funds if fund.get("code")},
             "required_status": "ready" if run.quality.status is QualityStatus.READY else "degraded",
             "comparison_status": "compared" if previous else "first_review",
         }
         try:
             if comparison_gaps:
                 raise ValueError("历史比较缺少可核对证据：" + "、".join(comparison_gaps))
-            response = await self.provider.chat(
-                messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False, default=str)}],
-                tools=[tool], system_prompt=skill.instructions, max_tokens=4000,
-            )
-            call = next((item for item in response.tool_calls or []
-                         if item.name == "submit_portfolio_review"), None)
-            if call is None:
-                raise ValueError("模型未提交结构化复盘")
-            submitted = dict(call.arguments)
-            submitted["as_of"] = as_of.model_dump(mode="json")
-            submitted["comparison_status"] = payload["comparison_status"]
-            submitted["previous_review_id"] = previous.get("id") if previous else None
-            submitted["changes_since_previous"] = [change.model_dump(mode="json")
-                                                   for change in verified_changes]
-            for finding in submitted.get("findings") or []:
-                finding["relation_to_previous"] = (
-                    "首次复盘，暂无上次判断可比较" if not previous else
-                    "与上次存在已核实变化，详见比较记录" if any(
-                        change.kind != "continuity" for change in verified_changes
-                    ) else "已核对数据，未出现可确认的新变化"
+            for attempt in range(2):
+                request = dict(payload)
+                if attempt:
+                    request["retry_constraint"] = (
+                        "上次提交包含未经规则裁决的操作或目标仓位。"
+                        "请删除所有操作建议和目标数字，只陈述证据事实与下一步观察条件。"
+                    )
+                response = await self.provider.chat(
+                    messages=[{"role": "user", "content": json.dumps(request, ensure_ascii=False, default=str)}],
+                    tools=[tool], system_prompt=skill.instructions, max_tokens=4000,
                 )
-            submitted["evidence_ids"] = list(dict.fromkeys([
-                *(submitted.get("evidence_ids") or []),
-                *(evidence_id for change in verified_changes
-                  for evidence_id in change.current_evidence_ids + change.previous_evidence_ids),
-            ]))
-            result = PortfolioReviewResult.model_validate(submitted)
+                call = next((item for item in response.tool_calls or []
+                             if item.name == "submit_portfolio_review"), None)
+                if call is None:
+                    raise ValueError("模型未提交结构化复盘")
+                submitted = dict(call.arguments)
+                submitted["as_of"] = as_of.model_dump(mode="json")
+                submitted["comparison_status"] = payload["comparison_status"]
+                submitted["previous_review_id"] = previous.get("id") if previous else None
+                submitted["changes_since_previous"] = [change.model_dump(mode="json")
+                                                       for change in verified_changes]
+                for finding in submitted.get("findings") or []:
+                    finding["relation_to_previous"] = (
+                        "首次复盘，暂无上次判断可比较" if not previous else
+                        "与上次存在已核实变化，详见比较记录" if any(
+                            change.kind != "continuity" for change in verified_changes
+                        ) else "已核对数据，未出现可确认的新变化"
+                    )
+                submitted["evidence_ids"] = list(dict.fromkeys([
+                    *(submitted.get("evidence_ids") or []),
+                    *(evidence_id for change in verified_changes
+                      for evidence_id in change.current_evidence_ids + change.previous_evidence_ids),
+                ]))
+                result = PortfolioReviewResult.model_validate(submitted)
+                if not _has_unruled_action(result) or attempt:
+                    break
             if result.status != payload["required_status"]:
                 raise ValueError("报告状态与质量门不一致")
             if result.comparison_status != payload["comparison_status"]:
@@ -190,6 +224,7 @@ class PortfolioReviewResultBuilder:
                     raise ValueError("变化引用了非上次证据")
             if _has_unruled_action(result):
                 raise ValueError("组合复盘包含未经规则裁决的操作或目标仓位")
+            result.limitations = list(dict.fromkeys([*result.limitations, *run.quality.reasons]))
             baseline_ids = [fact["evidence_id"] for fact in current if (
                 fact["source_ref"] == "derived:portfolio_composition"
                 or fact["source_ref"].startswith("index_daily:")
@@ -224,20 +259,36 @@ class PortfolioReviewResultBuilder:
                                       fact["values"].get("position_id")), None)
             if holdings_fact:
                 cited_ids.append(holdings_fact["evidence_id"])
+                holdings_limited = "get_portfolio" in [
+                    *run.quality.missing, *run.quality.stale, *run.quality.failed,
+                ]
+                inputs_ready = run.quality.status is QualityStatus.READY
                 findings.append({
-                    "title": "核对持仓估值日期", "category": "data_to_verify",
-                    "importance": "已读取持仓记录，但本次数据质量不足以确认最新估值变化。",
+                    "title": "核对持仓估值日期" if holdings_limited else "持仓估值已读取",
+                    "category": "data_to_verify",
+                    "importance": (
+                        "已读取持仓记录，但本次数据质量不足以确认最新估值变化。"
+                        if holdings_limited else
+                        "持仓估值及日期已读取；结构化结论未通过校验，以下仅保留可核对事实。"
+                        if inputs_ready else
+                        "持仓估值及日期已有记录；本次缺少可核对的完整估值。"
+                    ),
                     "current_evidence_ids": [holdings_fact["evidence_id"]],
                     "relation_to_previous": relation,
-                    "next_observation": "待基金净值与估值日期更新后重新核对。",
+                    "next_observation": (
+                        "待基金净值与估值日期更新后重新核对。"
+                        if holdings_limited else
+                        "核对下一次净值日期与持仓变化。"
+                        if inputs_ready else "补齐持仓估值后重新复盘。"
+                    ),
                 })
-            if run.quality.missing or run.quality.failed:
+            if "get_portfolio" in [*run.quality.missing, *run.quality.failed]:
                 findings.append({
-                    "title": "规则与数据覆盖待补齐", "category": "data_to_verify",
-                    "importance": "本次部分必需数据缺失，无法据此给出基金操作判断。",
+                    "title": "持仓估值待补齐", "category": "data_to_verify",
+                    "importance": "本次缺少可核对的持仓估值。",
                     "current_evidence_ids": [metadata["evidence_id"]],
                     "relation_to_previous": relation,
-                    "next_observation": "先补齐数据或在投资建议页生成规则建议，再重新复盘。",
+                    "next_observation": "先补齐持仓估值及对应日期，再重新复盘。",
                 })
             cited_ids.append(metadata["evidence_id"])
             try:
@@ -251,7 +302,7 @@ class PortfolioReviewResultBuilder:
                 selected = []
             selected.append(metadata)
             return PortfolioReviewResult(
-                status="degraded", as_of=as_of,
+                status="ready" if run.quality.status is QualityStatus.READY and holdings_fact else "degraded", as_of=as_of,
                 comparison_status="compared" if previous else "first_review",
                 previous_review_id=previous.get("id") if previous else None,
                 findings=findings[:3], limitations=reasons,
@@ -261,6 +312,11 @@ class PortfolioReviewResultBuilder:
 
 def render_review_answer(result: PortfolioReviewResult) -> str:
     lines = ["持仓复盘" + ("（数据受限）" if result.status == "degraded" else "")]
+    if result.as_of.holdings:
+        dates = Counter(result.as_of.holdings.values())
+        lines.append("持仓估值日期：" + "、".join(
+            f"{day}（{count}笔）" for day, count in sorted(dates.items(), reverse=True)
+        ))
     for index, finding in enumerate(result.findings, 1):
         lines.extend([
             f"{index}. {finding.title}：{finding.importance}",
@@ -280,5 +336,5 @@ def render_review_answer(result: PortfolioReviewResult) -> str:
                 f"   上次证据（截至 {change.previous_as_of}）：{', '.join(change.previous_evidence_ids)}",
             ])
     for limitation in result.limitations:
-        lines.append(f"数据限制：{limitation}")
+        lines.append(f"{'数据限制' if result.status == 'degraded' else '数据提示'}：{limitation}")
     return "\n".join(lines)

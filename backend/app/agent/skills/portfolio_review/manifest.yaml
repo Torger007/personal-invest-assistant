@@ -1,7 +1,10 @@
 id: portfolio_review
-version: 1.0.2
+version: 1.1.0
 chat_patterns:
   - "持仓复盘|组合复盘|复盘我的持仓"
+  - "复盘.*持仓"
+  - "(?:持仓|组合).*(?:分析|风险|估值|变化|建议|比较|对比|配置)"
+  - "(?:比较|对比).*(?:持仓|组合)"
   - "(?:持仓|组合).*(?:今天最值得关注|与上次相比|和上次相比)"
   - "^(?:帮我|请|给我)?(?:分析|看看|看下|复盘)(?:一下)?(?:我的|我|当前|目前)?(?:持仓|投资组合)(?:情况|现状)?[？?。]?$"
   - "^(?:我的|当前|目前)?(?:持仓|投资组合)(?:怎么样|如何|情况如何)[？?。]?$"
@@ -10,19 +13,9 @@ allowed_tools:
   - get_market_overview
   - get_latest_advice
   - compare_funds
-  - get_fund_nav
-  - get_sector_trend
 required_tools:
   - get_portfolio
-  - get_market_overview
-  - get_latest_advice
-  - compare_funds
 supplement_tools:
   - get_portfolio
-  - get_market_overview
-  - get_latest_advice
-  - compare_funds
-  - get_fund_nav
-  - get_sector_trend
 max_tool_calls: 10
 max_supplement_calls: 2
